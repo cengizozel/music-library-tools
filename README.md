@@ -95,4 +95,3 @@ Messy library
 - Fix the original FLAC library first — everything else derives from it
 - Dry-run before applying anything destructive
 - The MP3 directory is never a source of truth
-```
