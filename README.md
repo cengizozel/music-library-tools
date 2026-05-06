@@ -64,6 +64,19 @@ python3 library_organizer/organize.py ~/Music/Library --apply --fetch-art
 
 Dry-run by default. Reports albums with missing tags before you commit to anything.
 
+### 5. Strip Non-Audio
+Removes all non-FLAC/MP3 files from an incoming directory before import — `.log`, `.m3u`, `.txt`, `.jpg`, `Thumbs.db`, etc. Also removes empty directories left behind.
+
+```bash
+# preview
+python3 strip_non_audio/strip.py ~/Music/Incoming
+
+# apply
+python3 strip_non_audio/strip.py ~/Music/Incoming --apply
+```
+
+Dry-run by default.
+
 ## Library Layout
 
 The folder structure is always `Artist/[Year] Project/Track.ext` regardless of release type (album, EP, single, compilation, soundtrack). Release type is stored in tags only — not in folder names. This ensures compatibility with Plex, Navidrome, Rockbox, and Neutron.
@@ -93,6 +106,7 @@ Artist/
 
 ```
 Anything messy (any folder structure, any tags)
+  → Strip Non-Audio          — remove .log, .m3u, .txt, cover art, etc.
   → beet import              — identify, tag, and move into clean library structure
   → FLAC Validator           — flag any non-FLAC files
   → Corruption Checker       — verify audio integrity
@@ -105,7 +119,13 @@ The Library Organizer is a separate tool for re-organizing an already-imported l
 
 Beets identifies music via MusicBrainz (using existing tags or acoustic fingerprinting), writes corrected tags, and moves files into the library in the correct structure — all in one step. It accepts any messy input.
 
-Before first use, set `directory` in [beets/config.yaml](beets/config.yaml) to your library path.
+Before first use, open [beets/config.yaml](beets/config.yaml) and update these two lines:
+
+```yaml
+directory: /your/library/path        # ← set this to your library directory
+
+fpcalc: /opt/homebrew/bin/fpcalc    # ← set this to the output of: which fpcalc
+```
 
 Acoustic fingerprinting requires `chromaprint` — no Python-only alternative exists:
 

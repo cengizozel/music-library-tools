@@ -5,11 +5,11 @@
 #   venv/bin/beet -c beets/config.yaml import /path/to/incoming/music
 
 # Set this to your actual library directory
-directory: /Users/cengizozel/Documents/Projects/music-library-tools/sample_library_organized
+directory: /Users/cengizozel/Documents/Projects/music-library-tools/sample_library
 library: ~/.config/beets/music-library-tools.db
 
 import:
-  copy: yes         # copy files into the library (originals stay in place)
+  move: yes         # move files out of _Unmatched into the library
   write: yes        # write corrected tags to files
   timid: no
   quiet: yes        # never prompt — auto-accept strong matches, use as-is for weak ones
