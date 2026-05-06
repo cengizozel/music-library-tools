@@ -40,7 +40,7 @@ def main():
     for root, dirs, files in os.walk(directory):
         for fname in files:
             p = Path(root) / fname
-            if p.suffix.lower() not in AUDIO_EXTENSIONS:
+            if p.suffix.lower() not in AUDIO_EXTENSIONS and fname != ".keep":
                 to_delete.append(p)
 
     if not to_delete:
