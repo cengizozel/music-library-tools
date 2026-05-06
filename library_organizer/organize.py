@@ -35,9 +35,28 @@ except ImportError:
     print("Error: mutagen not installed.  Run: pip install mutagen")
     sys.exit(1)
 
-AUDIO_EXTENSIONS = {".flac", ".mp3"}
-IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp"}
-VARIOUS_ARTISTS  = {"various artists", "various", "va", "v/a", "v.a.", "v.a"}
+AUDIO_EXTENSIONS  = {".flac", ".mp3"}
+IMAGE_EXTENSIONS  = {".jpg", ".jpeg", ".png", ".bmp"}
+VARIOUS_ARTISTS   = {"various artists", "various", "va", "v/a", "v.a.", "v.a"}
+DISC_FOLDER_RE    = re.compile(r'^(cd|disc|disk)\s*(\d+)$', re.IGNORECASE)
+
+
+def disc_number_from_name(name: str) -> int:
+    m = DISC_FOLDER_RE.match(name.strip())
+    return int(m.group(2)) if m else 0
+
+
+def strip_disc_suffix(album: str) -> str:
+    album = re.sub(r'\s*[\(\[](cd|disc|disk)\s*\d+[\)\]]', '', album, flags=re.IGNORECASE)
+    album = re.sub(r'\s*(cd|disc|disk)\s*\d+$', '', album, flags=re.IGNORECASE)
+    return album.strip()
+
+
+def get_disc_subfolders(directory: Path) -> list[Path]:
+    return sorted(
+        (d for d in directory.iterdir() if d.is_dir() and DISC_FOLDER_RE.match(d.name)),
+        key=lambda d: disc_number_from_name(d.name),
+    )
 
 
 def sanitize(name: str) -> str:
@@ -186,24 +205,49 @@ class AlbumPlan:
 def plan_album(source_dir: Path, library_root: Path) -> AlbumPlan:
     plan = AlbumPlan(source_dir)
 
-    audio_files = sorted(
-        f for f in source_dir.iterdir()
-        if f.is_file() and f.suffix.lower() in AUDIO_EXTENSIONS
-    )
+    disc_subs = get_disc_subfolders(source_dir)
 
-    if not audio_files:
-        return plan
+    if disc_subs:
+        # Build (disc_num, path) list from subfolders
+        disc_audio: list[tuple[int, Path]] = []
+        for disc_dir in disc_subs:
+            dn = disc_number_from_name(disc_dir.name)
+            for f in sorted(disc_dir.iterdir()):
+                if f.is_file() and f.suffix.lower() in AUDIO_EXTENSIONS:
+                    disc_audio.append((dn, f))
+        if not disc_audio:
+            return plan
+        first_file = disc_audio[0][1]
+        is_multidisc = len(disc_subs) > 1
+    else:
+        audio_files = sorted(
+            f for f in source_dir.iterdir()
+            if f.is_file() and f.suffix.lower() in AUDIO_EXTENSIONS
+        )
+        if not audio_files:
+            return plan
+        # Build (disc_num, path) list from tags
+        disc_audio = []
+        for f in audio_files:
+            t  = read_tags(f)
+            dn = parse_number(get_tag(t, "discnumber", "disc")) or 1
+            disc_audio.append((dn, f))
+        first_file   = audio_files[0]
+        disc_numbers = {dn for dn, _ in disc_audio}
+        is_multidisc = max(disc_numbers, default=1) > 1
 
     # Album-level tags from first track (prefer FLAC over MP3)
-    first = next((f for f in audio_files if f.suffix.lower() == ".flac"), audio_files[0])
-    tags  = read_tags(first)
+    flac_first = next((f for _, f in disc_audio if f.suffix.lower() == ".flac"), None)
+    tags = read_tags(flac_first or first_file)
 
     if not tags:
-        plan.warnings.append(f"Could not read tags from {first.name}")
+        plan.warnings.append(f"Could not read tags from {first_file.name}")
         return plan
 
     albumartist = get_tag(tags, "albumartist", "album artist") or get_tag(tags, "artist")
     album       = get_tag(tags, "album")
+    if disc_subs:
+        album = strip_disc_suffix(album)
     year        = get_tag(tags, "originalyear", "originaldate", "date", "year")[:4]
     plan.mbid   = get_tag(tags, "musicbrainz_albumid")
 
@@ -216,23 +260,13 @@ def plan_album(source_dir: Path, library_root: Path) -> AlbumPlan:
     plan.target_dir   = build_target_dir(library_root, plan.release_type,
                                          albumartist, album, year)
 
-    # Determine if multi-disc by scanning all tracks
-    disc_numbers = set()
-    for audio in audio_files:
-        t = read_tags(audio)
-        dn = parse_number(get_tag(t, "discnumber", "disc"))
-        if dn:
-            disc_numbers.add(dn)
-    is_multidisc = max(disc_numbers, default=1) > 1
-
     # Per-track moves
-    for audio in audio_files:
+    for disc_num, audio in disc_audio:
         t   = read_tags(audio)
         ext = audio.suffix.lower()
 
         title     = get_tag(t, "title")
         track_num = parse_number(get_tag(t, "tracknumber"))
-        disc_num  = parse_number(get_tag(t, "discnumber", "disc")) or 1
 
         if not title:
             plan.warnings.append(f"Missing title: {audio.name}")
@@ -240,7 +274,7 @@ def plan_album(source_dir: Path, library_root: Path) -> AlbumPlan:
         fname = build_filename(track_num, disc_num, is_multidisc, title, ext)
         plan.moves.append((audio, plan.target_dir / fname))
 
-    # Image files travel with the album
+    # Image files from source dir travel with the album
     for f in source_dir.iterdir():
         if f.is_file() and f.suffix.lower() in IMAGE_EXTENSIONS:
             plan.moves.append((f, plan.target_dir / f.name))
@@ -269,8 +303,13 @@ def main():
 
     album_dirs: set[Path] = set()
     for root, _, files in os.walk(library_root):
+        p = Path(root)
         if any(Path(f).suffix.lower() in AUDIO_EXTENSIONS for f in files):
-            album_dirs.add(Path(root))
+            # If this dir is a disc subfolder, register the parent as the album
+            if DISC_FOLDER_RE.match(p.name):
+                album_dirs.add(p.parent)
+            else:
+                album_dirs.add(p)
 
     plans = [plan_album(d, library_root) for d in sorted(album_dirs)]
 
