@@ -35,6 +35,7 @@ musicbrainz:
 
 chroma:
   auto: yes         # fingerprint files with no tags automatically
+  fpcalc: /opt/homebrew/bin/fpcalc
 
 fetchart:
   auto: yes
