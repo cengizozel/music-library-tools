@@ -67,22 +67,22 @@ def report(results: dict, library_path: Path):
     if results["non_flac_audio"]:
         print(f"  Non-FLAC audio files ({len(results['non_flac_audio'])}):")
         for p in sorted(results["non_flac_audio"]):
-            print(f"    {p}")
+            print(f"    {p.relative_to(library_path)}")
 
     if results["fake_flac"]:
         print(f"\n  .flac files with invalid header ({len(results['fake_flac'])}):")
         for p in sorted(results["fake_flac"]):
-            print(f"    {p}")
+            print(f"    {p.relative_to(library_path)}")
 
     if results["wrong_extension"]:
         print(f"\n  Valid FLAC with wrong extension ({len(results['wrong_extension'])}):")
         for p in sorted(results["wrong_extension"]):
-            print(f"    {p}")
+            print(f"    {p.relative_to(library_path)}")
 
     if results["unreadable"]:
         print(f"\n  Unreadable files ({len(results['unreadable'])}):")
         for p in sorted(results["unreadable"]):
-            print(f"    {p}")
+            print(f"    {p.relative_to(library_path)}")
 
 
 def main():
