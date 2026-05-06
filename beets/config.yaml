@@ -12,7 +12,6 @@ import:
   move: yes         # move files out of _Unmatched into the library
   write: yes        # write corrected tags to files
   timid: no
-  quiet: yes        # never prompt — auto-accept strong matches, use as-is for weak ones
   quiet_fallback: asis  # if no strong match found, keep existing tags and move anyway
   log: ~/.config/beets/import.log
   languages: en

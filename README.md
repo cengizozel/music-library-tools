@@ -107,10 +107,14 @@ Artist/
 ```
 Anything messy (any folder structure, any tags)
   → Strip Non-Audio          — remove .log, .m3u, .txt, cover art, etc.
-  → beet import              — identify, tag, and move into clean library structure
+  → beet import -q           — auto-tag and move matched albums into library
+                               unmatched albums stay in _Unmatched/
   → FLAC Validator           — flag any non-FLAC files
   → Corruption Checker       — verify audio integrity
   → FLAC-to-MP3 Sync         — push changes to MP3 mirror (microSD etc.)
+
+To handle _Unmatched manually:
+  → beet import              — interactive mode, pick matches one by one
 ```
 
 The Library Organizer is a separate tool for re-organizing an already-imported library (e.g. after changing naming conventions). It is not part of the regular intake flow.
@@ -138,14 +142,17 @@ sudo apt install libchromaprint-tools
 ```
 
 ```bash
-# import new music (run interactively in your terminal)
-venv/bin/beet -c beets/config.yaml import ~/Music/Incoming
+# normal intake — fully automatic, no prompts
+venv/bin/beet -c beets/config.yaml import -q ~/Music/Library/_Unmatched
+
+# manual review — interactive, for albums left in _Unmatched
+venv/bin/beet -c beets/config.yaml import ~/Music/Library/_Unmatched
 
 # re-sync tags for files already in the library using their MusicBrainz IDs
 venv/bin/beet -c beets/config.yaml mbsync
 ```
 
-Beets will ask for confirmation when it is not confident about a match. Anything above 85% similarity is accepted automatically.
+Albums that cannot be matched automatically are routed to `_Unmatched/` inside the library. Run the manual review command to handle them one by one — beet will prompt you to pick a match, enter a MusicBrainz ID, or search by name.
 
 ## Philosophy
 
