@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
-Organizes a messy FLAC library into a consistent structure based on tags.
+Organizes a music library (FLAC and MP3) into a consistent structure based on tags.
 
 Layout:
-  Artist/[Year] Album/01 - Track Title.flac
-  _EPs/Artist/[Year] Album [EP]/01 - Track Title.flac
-  _Singles/Artist/[Year] Track Title.flac
-  _Compilations/[Year] Album/01 - Artist - Track Title.flac
-  _Soundtracks/[Year] Album/01 - Track Title.flac
+  Artist/[Year] Album/01 - Track Title.ext
+  _EPs/Artist/[Year] Album [EP]/01 - Track Title.ext
+  _Singles/Artist/[Year] Track Title.ext
+  _Compilations/[Year] Album/01 - Artist - Track Title.ext
+  _Soundtracks/[Year] Album/01 - Track Title.ext
 
 Dry-run by default. Use --apply to move files.
 Use --fetch-art to download missing cover art from Cover Art Archive.
@@ -25,12 +25,15 @@ from pathlib import Path
 
 try:
     from mutagen.flac import FLAC
+    from mutagen.easyid3 import EasyID3
+    from mutagen.id3 import ID3NoHeaderError
 except ImportError:
     print("Error: mutagen not installed.  Run: pip install mutagen")
     sys.exit(1)
 
-IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp"}
-VARIOUS_ARTISTS = {"various artists", "various", "va", "v/a", "v.a.", "v.a"}
+AUDIO_EXTENSIONS  = {".flac", ".mp3"}
+IMAGE_EXTENSIONS  = {".jpg", ".jpeg", ".png", ".bmp"}
+VARIOUS_ARTISTS   = {"various artists", "various", "va", "v/a", "v.a.", "v.a"}
 
 
 def sanitize(name: str) -> str:
@@ -38,6 +41,18 @@ def sanitize(name: str) -> str:
     name = re.sub(r'[<>:"/\\|?*]', "_", name)
     name = re.sub(r"[\x00-\x1f]", "", name)
     return name.strip(". ") or "_"
+
+
+def read_tags(path: Path) -> dict:
+    try:
+        if path.suffix.lower() == ".flac":
+            a = FLAC(path)
+            return dict(a.tags or {})
+        else:
+            a = EasyID3(path)
+            return dict(a)
+    except (ID3NoHeaderError, Exception):
+        return {}
 
 
 def get_tag(tags: dict, *keys, default="") -> str:
@@ -97,32 +112,36 @@ def build_target_dir(library_root: Path, release_type: str,
         return library_root / "_EPs" / artist / f"{prefix}{ep_album}"
     if release_type == "single":
         return library_root / "_Singles" / artist
-    # album
     return library_root / artist / f"{prefix}{album}"
 
 
 def build_filename(release_type: str, track_num: int,
-                   track_artist: str, title: str) -> str:
+                   track_artist: str, title: str, ext: str) -> str:
     title        = sanitize(title)        if title        else "_Unknown Title"
     track_artist = sanitize(track_artist) if track_artist else "_Unknown Artist"
     num = f"{track_num:02d} - " if track_num else ""
 
     if release_type == "compilation":
-        return f"{num}{track_artist} - {title}.flac"
+        return f"{num}{track_artist} - {title}{ext}"
     if release_type == "single":
-        return f"{title}.flac"
-    return f"{num}{title}.flac"
+        return f"{title}{ext}"
+    return f"{num}{title}{ext}"
 
 
-def has_cover(flac_files: list, album_dir: Path) -> bool:
+def has_cover(audio_files: list, album_dir: Path) -> bool:
     for name in ("cover", "folder", "front", "artwork"):
         for ext in IMAGE_EXTENSIONS:
             if (album_dir / f"{name}{ext}").exists():
                 return True
-    if flac_files:
+    for f in audio_files:
         try:
-            if FLAC(flac_files[0]).pictures:
-                return True
+            if f.suffix.lower() == ".flac":
+                if FLAC(f).pictures:
+                    return True
+            else:
+                from mutagen.id3 import ID3
+                if ID3(f).getall("APIC"):
+                    return True
         except Exception:
             pass
     return False
@@ -160,17 +179,21 @@ class AlbumPlan:
 
 def plan_album(source_dir: Path, library_root: Path) -> AlbumPlan:
     plan = AlbumPlan(source_dir)
-    flac_files = sorted(source_dir.glob("*.flac"))
 
-    if not flac_files:
+    audio_files = sorted(
+        f for f in source_dir.iterdir()
+        if f.is_file() and f.suffix.lower() in AUDIO_EXTENSIONS
+    )
+
+    if not audio_files:
         return plan
 
-    # Album-level tags from the first track
-    try:
-        first = FLAC(flac_files[0])
-        tags  = dict(first.tags or {})
-    except Exception as e:
-        plan.warnings.append(f"Could not read tags: {e}")
+    # Album-level tags from the first track (prefer FLAC over MP3)
+    first = next((f for f in audio_files if f.suffix.lower() == ".flac"), audio_files[0])
+    tags  = read_tags(first)
+
+    if not tags:
+        plan.warnings.append(f"Could not read tags from {first.name}")
         return plan
 
     albumartist = get_tag(tags, "albumartist", "album artist") or get_tag(tags, "artist")
@@ -188,23 +211,19 @@ def plan_album(source_dir: Path, library_root: Path) -> AlbumPlan:
                                          albumartist, album, year)
 
     # Per-track moves
-    for flac in flac_files:
-        try:
-            a = FLAC(flac)
-            t = dict(a.tags or {})
-        except Exception:
-            plan.warnings.append(f"Could not read tags from {flac.name}")
-            continue
+    for audio in audio_files:
+        t   = read_tags(audio)
+        ext = audio.suffix.lower()
 
         title        = get_tag(t, "title")
         track_artist = get_tag(t, "artist")
         track_num    = parse_track_number(get_tag(t, "tracknumber"))
 
         if not title:
-            plan.warnings.append(f"Missing title: {flac.name}")
+            plan.warnings.append(f"Missing title: {audio.name}")
 
-        fname = build_filename(plan.release_type, track_num, track_artist, title)
-        plan.moves.append((flac, plan.target_dir / fname))
+        fname = build_filename(plan.release_type, track_num, track_artist, title, ext)
+        plan.moves.append((audio, plan.target_dir / fname))
 
     # Image files travel with the album
     for f in source_dir.iterdir():
@@ -216,7 +235,7 @@ def plan_album(source_dir: Path, library_root: Path) -> AlbumPlan:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Organize FLAC library into a consistent structure."
+        description="Organize music library into a consistent structure."
     )
     parser.add_argument("library",      help="Path to the music library directory")
     parser.add_argument("--apply",      action="store_true",
@@ -233,16 +252,16 @@ def main():
     mode = "APPLY" if args.apply else "DRY RUN"
     print(f"[{mode}] Library: {library_root}\n")
 
-    # Collect every directory that contains at least one FLAC
+    # Collect every directory that contains at least one audio file
     album_dirs: set[Path] = set()
     for root, _, files in os.walk(library_root):
-        if any(f.lower().endswith(".flac") for f in files):
+        if any(Path(f).suffix.lower() in AUDIO_EXTENSIONS for f in files):
             album_dirs.add(Path(root))
 
     plans = [plan_album(d, library_root) for d in sorted(album_dirs)]
 
-    changes        = [p for p in plans if p.has_changes]
-    already_ok     = [p for p in plans if not p.has_changes]
+    changes         = [p for p in plans if p.has_changes]
+    already_ok      = [p for p in plans if not p.has_changes]
     needs_attention = [p for p in plans if p.warnings]
 
     print(f"Albums found:       {len(plans)}")
@@ -294,8 +313,8 @@ def main():
 
         # Cover art
         if args.fetch_art:
-            flacs = list(p.target_dir.glob("*.flac"))
-            if not has_cover(flacs, p.target_dir) and p.mbid:
+            audio = list(p.target_dir.glob("*.flac")) + list(p.target_dir.glob("*.mp3"))
+            if not has_cover(audio, p.target_dir) and p.mbid:
                 ok = fetch_cover_art(p.mbid, p.target_dir)
                 if ok:
                     print(f"  Art downloaded → {p.target_dir.relative_to(library_root)}")

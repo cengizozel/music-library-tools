@@ -24,7 +24,7 @@ def is_flac_by_header(path: Path) -> bool:
 
 
 def load_ignore(library_path: Path) -> set[str]:
-    ignore_file = library_path / ".flacignore"
+    ignore_file = library_path / ".flac_exempt"
     if not ignore_file.exists():
         return set()
     ignored = set()

@@ -11,24 +11,24 @@ Scans the library and flags any file that is not a valid FLAC — checks both fi
 python3 flac_validator/validate.py ~/Music/Library
 ```
 
-To ignore directories that intentionally contain non-FLAC files (old demos, YouTube rips, etc.), create a `.flacignore` file in the library root — one directory name per line:
+To exempt directories that intentionally contain non-FLAC files (old demos, YouTube rips, etc.) from the check, create a `.flac_exempt` file in the library root — one directory name per line:
 
 ```
-# things that will never have a FLAC source
+# directories exempt from the FLAC requirement
 _NonFLAC
 _Demos
 _YouTubeRips
 ```
 
 ### 2. Corruption Checker
-Verifies the audio data of every FLAC file is intact using `flac --test`, which fully decodes each file and checks its MD5 checksum.
+Verifies the audio data of every FLAC and MP3 file. FLACs are checked using `flac --test` (full decode + MD5 verification). MP3s are checked using `ffmpeg -v error`.
 
 ```bash
 python3 corruption_checker/check.py ~/Music/Library
 python3 corruption_checker/check.py ~/Music/Library --jobs 8
 ```
 
-Requires: `brew install flac`
+Requires: `brew install flac` (for FLACs) and/or `brew install ffmpeg` (for MP3s) — only whichever is present in the library.
 
 ### 3. FLAC-to-MP3 Sync
 One-way sync from the FLAC library to a separate MP3 directory (e.g. a microSD card). Converts new files, skips unchanged ones, reconverts modified ones, and removes MP3s whose source FLAC was deleted.
@@ -47,7 +47,7 @@ Requires: `brew install ffmpeg`
 The MP3 directory is always a derived copy — never edit it directly.
 
 ### 4. Library Organizer
-Restructures a messy FLAC library into a consistent layout based on tags. Detects release type, renames files, moves albums into the right folders, and optionally downloads missing cover art from Cover Art Archive.
+Restructures a messy library (FLAC and MP3) into a consistent layout based on tags. Detects release type, renames files, moves albums into the right folders, and optionally downloads missing cover art from Cover Art Archive.
 
 ```bash
 pip install mutagen requests
