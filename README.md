@@ -92,12 +92,30 @@ Artist/
 ## Workflow
 
 ```
-Messy library
-  → run Library Organizer (dry-run first, then --apply)
-  → run FLAC Validator    (catch any non-FLAC files)
-  → run Corruption Checker
-  → run FLAC-to-MP3 Sync  (whenever you want to update the MP3 copy)
+Incoming music (any state, any tags)
+  → beet import              — fetch correct tags from MusicBrainz, embed cover art
+  → FLAC Validator           — flag any non-FLAC files
+  → Corruption Checker       — verify audio integrity
+  → Library Organizer        — rename and restructure based on tags (dry-run first)
+  → FLAC-to-MP3 Sync         — push changes to MP3 mirror (microSD etc.)
 ```
+
+### Tagging with beets
+
+Beets queries MusicBrainz for metadata and writes correct tags to your files. It uses acoustic fingerprinting for files with missing or wrong tags.
+
+```bash
+# install chromaprint for fingerprinting
+brew install chromaprint
+
+# tag a folder of music (timid mode — confirms uncertain matches)
+beet -c beets/config.yaml import ~/Music/Incoming
+
+# re-sync tags for files that already have MusicBrainz IDs
+beet -c beets/config.yaml mbsync
+```
+
+Beets does **not** move or rename files — the Library Organizer handles that after tagging.
 
 ## Philosophy
 

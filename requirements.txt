@@ -1,3 +1,7 @@
 # library_organizer
 mutagen
 requests
+
+# tagger
+beets
+pyacoustid

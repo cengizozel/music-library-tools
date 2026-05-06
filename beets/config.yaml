@@ -1,0 +1,68 @@
+# Beets config — tag only, do not move or rename files.
+# After running beets, use the library organizer to structure the library.
+#
+# Usage:
+#   beet -c /path/to/this/config.yaml import /path/to/music
+
+library: ~/.config/beets/music-library-tools.db
+log: ~/.config/beets/music-library-tools.log
+
+import:
+  move: no          # never move files — organizer handles this
+  copy: no          # never copy files
+  write: yes        # write tags to files
+  timid: yes        # ask before applying uncertain matches
+  log: ~/.config/beets/import.log
+  languages: en
+
+# Do not let beets manage paths — organizer does that
+paths:
+  default: $albumartist/$album/$track - $title
+  singleton: $artist/$title
+  comp: Various Artists/$album/$track - $title
+
+plugins:
+  - chroma          # acoustic fingerprinting (needs chromaprint: brew install chromaprint)
+  - fetchart        # download cover art
+  - embedart        # embed cover art into files
+  - lyrics          # fetch lyrics (optional)
+  - mbsync          # sync tags from MusicBrainz using existing MBIDs
+  - missing         # report missing tracks in albums
+  - duplicates      # find duplicate tracks
+
+musicbrainz:
+  searchlimit: 10
+
+chroma:
+  auto: yes         # fingerprint files with no tags automatically
+
+fetchart:
+  auto: yes
+  sources:
+    - coverart       # Cover Art Archive (MusicBrainz)
+    - itunes
+    - amazon
+  store_source: yes
+
+embedart:
+  auto: yes
+  ifempty: yes      # only embed if no art already present
+
+# Write these tags to files
+tags:
+  - title
+  - artist
+  - albumartist
+  - album
+  - year
+  - tracknumber
+  - totaltracks
+  - discnumber
+  - totaldiscs
+  - genre
+  - mb_trackid
+  - mb_albumid
+  - mb_artistid
+  - mb_albumartistid
+  - releasetype
+  - compilation
