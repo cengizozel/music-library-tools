@@ -104,16 +104,25 @@ Incoming music (any state, any tags)
 
 Beets queries MusicBrainz for metadata and writes correct tags to your files. It uses acoustic fingerprinting for files with missing or wrong tags.
 
+Acoustic fingerprinting requires `chromaprint` (`fpcalc` binary) — this is a native library with no Python-only alternative:
+
 ```bash
-# install chromaprint for fingerprinting
+# macOS
 brew install chromaprint
 
+# Linux (Debian/Ubuntu)
+sudo apt install libchromaprint-tools
+```
+
+```bash
 # tag a folder of music (timid mode — confirms uncertain matches)
-beet -c beets/config.yaml import ~/Music/Incoming
+venv/bin/beet -c beets/config.yaml import ~/Music/Incoming
 
 # re-sync tags for files that already have MusicBrainz IDs
-beet -c beets/config.yaml mbsync
+venv/bin/beet -c beets/config.yaml mbsync
 ```
+
+Beets is interactive — run it directly in your terminal. It will ask you to confirm matches it's unsure about.
 
 Beets does **not** move or rename files — the Library Organizer handles that after tagging.
 
