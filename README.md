@@ -66,27 +66,27 @@ Dry-run by default. Reports albums with missing tags before you commit to anythi
 
 ## Library Layout
 
+The folder structure is always `Artist/[Year] Project/Track.ext` regardless of release type (album, EP, single, compilation, soundtrack). Release type is stored in tags only — not in folder names. This ensures compatibility with Plex, Navidrome, Rockbox, and Neutron.
+
 ```
 Artist/
   [Year] Album/
     01 - Track Title.flac
 
-_EPs/
-  Artist/
-    [Year] Album [EP]/
-      01 - Track Title.flac
-
-_Singles/
-  Artist/
-    [Year] Track Title.flac
-
-_Compilations/
-  [Year] Album/
-    01 - Artist - Track Title.flac
-
-_Soundtracks/
-  [Year] Album/
+Artist/
+  [Year] Album [EP]/        ← [EP] suffix is cosmetic only
     01 - Track Title.flac
+
+Various Artists/
+  [Year] Compilation/
+    01 - Track Title.flac
+
+Artist/
+  [Year] Multi-Disc Album/
+    101 - Track Title.flac  ← disc 1
+    102 - Track Title.flac
+    201 - Track Title.flac  ← disc 2
+    202 - Track Title.flac
 ```
 
 ## Workflow

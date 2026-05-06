@@ -1,13 +1,17 @@
 #!/usr/bin/env python3
 """
-Organizes a music library (FLAC and MP3) into a consistent structure based on tags.
+Organizes a music library (FLAC and MP3) into a Plex/Navidrome/Rockbox-compatible structure.
 
-Layout:
-  Artist/[Year] Album/01 - Track Title.ext
-  _EPs/Artist/[Year] Album [EP]/01 - Track Title.ext
-  _Singles/Artist/[Year] Track Title.ext
-  _Compilations/[Year] Album/01 - Artist - Track Title.ext
-  _Soundtracks/[Year] Album/01 - Track Title.ext
+Layout (always):
+  Artist/[Year] Project/01 - Track Title.ext
+  Various Artists/[Year] Project/01 - Track Title.ext  (compilations)
+
+Multi-disc:
+  Artist/[Year] Album/101 - Track Title.ext  (disc 1)
+                       201 - Track Title.ext  (disc 2)
+
+Release type (album, EP, single, compilation, soundtrack) is stored in tags only.
+Folder names never encode release type except optionally [EP] as a cosmetic suffix.
 
 Dry-run by default. Use --apply to move files.
 Use --fetch-art to download missing cover art from Cover Art Archive.
@@ -31,9 +35,9 @@ except ImportError:
     print("Error: mutagen not installed.  Run: pip install mutagen")
     sys.exit(1)
 
-AUDIO_EXTENSIONS  = {".flac", ".mp3"}
-IMAGE_EXTENSIONS  = {".jpg", ".jpeg", ".png", ".bmp"}
-VARIOUS_ARTISTS   = {"various artists", "various", "va", "v/a", "v.a.", "v.a"}
+AUDIO_EXTENSIONS = {".flac", ".mp3"}
+IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp"}
+VARIOUS_ARTISTS  = {"various artists", "various", "va", "v/a", "v.a.", "v.a"}
 
 
 def sanitize(name: str) -> str:
@@ -63,9 +67,9 @@ def get_tag(tags: dict, *keys, default="") -> str:
     return default
 
 
-def parse_track_number(raw: str) -> int:
+def parse_number(raw: str) -> int:
     try:
-        return int(raw.split("/")[0])
+        return int(str(raw).split("/")[0])
     except (ValueError, AttributeError):
         return 0
 
@@ -99,32 +103,34 @@ def detect_release_type(tags: dict, album: str) -> str:
 
 def build_target_dir(library_root: Path, release_type: str,
                      artist: str, album: str, year: str) -> Path:
-    artist = sanitize(artist) if artist else "_Unknown Artist"
-    album  = sanitize(album)  if album  else "_Unknown Album"
+    # Compilations and soundtracks with various artists go under "Various Artists"
+    if release_type in ("compilation", "soundtrack"):
+        folder_artist = "Various Artists"
+    else:
+        folder_artist = sanitize(artist) if artist else "_Unknown Artist"
+
+    album  = sanitize(album) if album else "_Unknown Album"
     prefix = f"[{year}] " if year else ""
 
-    if release_type == "compilation":
-        return library_root / "_Compilations" / f"{prefix}{album}"
-    if release_type == "soundtrack":
-        return library_root / "_Soundtracks" / f"{prefix}{album}"
-    if release_type == "ep":
-        ep_album = album if re.search(r"\bep\b|\(ep\)|\[ep\]", album, re.I) else f"{album} [EP]"
-        return library_root / "_EPs" / artist / f"{prefix}{ep_album}"
-    if release_type == "single":
-        return library_root / "_Singles" / artist
-    return library_root / artist / f"{prefix}{album}"
+    # Optionally keep [EP] as a cosmetic suffix in the folder name
+    if release_type == "ep" and not re.search(r"\bep\b|\(ep\)|\[ep\]", album, re.I):
+        album = f"{album} [EP]"
+
+    return library_root / folder_artist / f"{prefix}{album}"
 
 
-def build_filename(release_type: str, track_num: int,
-                   track_artist: str, title: str, ext: str) -> str:
-    title        = sanitize(title)        if title        else "_Unknown Title"
-    track_artist = sanitize(track_artist) if track_artist else "_Unknown Artist"
-    num = f"{track_num:02d} - " if track_num else ""
+def build_filename(track_num: int, disc_num: int, is_multidisc: bool,
+                   title: str, ext: str) -> str:
+    title = sanitize(title) if title else "_Unknown Title"
 
-    if release_type == "compilation":
-        return f"{num}{track_artist} - {title}{ext}"
-    if release_type == "single":
-        return f"{title}{ext}"
+    if track_num:
+        if is_multidisc and disc_num:
+            num = f"{disc_num}{track_num:02d} - "
+        else:
+            num = f"{track_num:02d} - "
+    else:
+        num = ""
+
     return f"{num}{title}{ext}"
 
 
@@ -188,7 +194,7 @@ def plan_album(source_dir: Path, library_root: Path) -> AlbumPlan:
     if not audio_files:
         return plan
 
-    # Album-level tags from the first track (prefer FLAC over MP3)
+    # Album-level tags from first track (prefer FLAC over MP3)
     first = next((f for f in audio_files if f.suffix.lower() == ".flac"), audio_files[0])
     tags  = read_tags(first)
 
@@ -198,7 +204,7 @@ def plan_album(source_dir: Path, library_root: Path) -> AlbumPlan:
 
     albumartist = get_tag(tags, "albumartist", "album artist") or get_tag(tags, "artist")
     album       = get_tag(tags, "album")
-    year        = get_tag(tags, "date", "year")[:4]
+    year        = get_tag(tags, "originalyear", "originaldate", "date", "year")[:4]
     plan.mbid   = get_tag(tags, "musicbrainz_albumid")
 
     if not albumartist:
@@ -210,19 +216,28 @@ def plan_album(source_dir: Path, library_root: Path) -> AlbumPlan:
     plan.target_dir   = build_target_dir(library_root, plan.release_type,
                                          albumartist, album, year)
 
+    # Determine if multi-disc by scanning all tracks
+    disc_numbers = set()
+    for audio in audio_files:
+        t = read_tags(audio)
+        dn = parse_number(get_tag(t, "discnumber", "disc"))
+        if dn:
+            disc_numbers.add(dn)
+    is_multidisc = max(disc_numbers, default=1) > 1
+
     # Per-track moves
     for audio in audio_files:
         t   = read_tags(audio)
         ext = audio.suffix.lower()
 
-        title        = get_tag(t, "title")
-        track_artist = get_tag(t, "artist")
-        track_num    = parse_track_number(get_tag(t, "tracknumber"))
+        title     = get_tag(t, "title")
+        track_num = parse_number(get_tag(t, "tracknumber"))
+        disc_num  = parse_number(get_tag(t, "discnumber", "disc")) or 1
 
         if not title:
             plan.warnings.append(f"Missing title: {audio.name}")
 
-        fname = build_filename(plan.release_type, track_num, track_artist, title, ext)
+        fname = build_filename(track_num, disc_num, is_multidisc, title, ext)
         plan.moves.append((audio, plan.target_dir / fname))
 
     # Image files travel with the album
@@ -235,12 +250,12 @@ def plan_album(source_dir: Path, library_root: Path) -> AlbumPlan:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Organize music library into a consistent structure."
+        description="Organize music library into a Plex/Navidrome-compatible structure."
     )
-    parser.add_argument("library",      help="Path to the music library directory")
-    parser.add_argument("--apply",      action="store_true",
+    parser.add_argument("library",     help="Path to the music library directory")
+    parser.add_argument("--apply",     action="store_true",
                         help="Apply changes (default is dry-run)")
-    parser.add_argument("--fetch-art",  action="store_true",
+    parser.add_argument("--fetch-art", action="store_true",
                         help="Download missing cover art from Cover Art Archive")
     args = parser.parse_args()
 
@@ -252,7 +267,6 @@ def main():
     mode = "APPLY" if args.apply else "DRY RUN"
     print(f"[{mode}] Library: {library_root}\n")
 
-    # Collect every directory that contains at least one audio file
     album_dirs: set[Path] = set()
     for root, _, files in os.walk(library_root):
         if any(Path(f).suffix.lower() in AUDIO_EXTENSIONS for f in files):
@@ -311,7 +325,6 @@ def main():
                 print(f"  ERROR {src.name}: {e}")
                 errors += 1
 
-        # Cover art
         if args.fetch_art:
             audio = list(p.target_dir.glob("*.flac")) + list(p.target_dir.glob("*.mp3"))
             if not has_cover(audio, p.target_dir) and p.mbid:
@@ -319,7 +332,6 @@ def main():
                 if ok:
                     print(f"  Art downloaded → {p.target_dir.relative_to(library_root)}")
 
-        # Remove empty source directory
         if p.source_dir.exists() and p.source_dir != p.target_dir:
             try:
                 if not any(p.source_dir.iterdir()):
