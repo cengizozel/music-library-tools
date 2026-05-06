@@ -11,6 +11,15 @@ Scans the library and flags any file that is not a valid FLAC — checks both fi
 python3 flac_validator/validate.py ~/Music/Library
 ```
 
+To ignore directories that intentionally contain non-FLAC files (old demos, YouTube rips, etc.), create a `.flacignore` file in the library root — one directory name per line:
+
+```
+# things that will never have a FLAC source
+_NonFLAC
+_Demos
+_YouTubeRips
+```
+
 ### 2. Corruption Checker
 Verifies the audio data of every FLAC file is intact using `flac --test`, which fully decodes each file and checks its MD5 checksum.
 

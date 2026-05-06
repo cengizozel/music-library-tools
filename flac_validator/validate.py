@@ -23,6 +23,18 @@ def is_flac_by_header(path: Path) -> bool:
         return False
 
 
+def load_ignore(library_path: Path) -> set[str]:
+    ignore_file = library_path / ".flacignore"
+    if not ignore_file.exists():
+        return set()
+    ignored = set()
+    for line in ignore_file.read_text().splitlines():
+        line = line.strip()
+        if line and not line.startswith("#"):
+            ignored.add(line)
+    return ignored
+
+
 def scan(library_path: Path) -> dict:
     results = {
         "wrong_extension": [],   # non-.flac extension but valid FLAC header
@@ -31,7 +43,11 @@ def scan(library_path: Path) -> dict:
         "unreadable": [],        # couldn't read the file
     }
 
-    for root, _, files in os.walk(library_path):
+    ignored = load_ignore(library_path)
+
+    for root, dirs, files in os.walk(library_path):
+        dirs[:] = [d for d in dirs if d not in ignored]
+
         for fname in files:
             path = Path(root) / fname
             ext = path.suffix.lower()
