@@ -1,40 +1,50 @@
-# Beets config — tag only, do not move or rename files.
-# After running beets, use the library organizer to structure the library.
+# Beets config — tags and organizes music into the library in one step.
+# Accepts any messy input structure. Outputs a clean, consistently named library.
 #
 # Usage:
-#   beet -c /path/to/this/config.yaml import /path/to/music
+#   venv/bin/beet -c beets/config.yaml import /path/to/incoming/music
 
+# Set this to your actual library directory
+directory: /Users/cengizozel/Documents/Projects/music-library-tools/sample_library_organized
 library: ~/.config/beets/music-library-tools.db
-log: ~/.config/beets/music-library-tools.log
 
 import:
-  move: no          # never move files — organizer handles this
-  copy: no          # never copy files
-  write: yes        # write tags to files
-  timid: yes        # ask before applying uncertain matches
+  copy: yes         # copy files into the library (originals stay in place)
+  write: yes        # write corrected tags to files
+  timid: no
+  quiet: yes        # never prompt — auto-accept strong matches, use as-is for weak ones
+  quiet_fallback: asis  # if no strong match found, keep existing tags and move anyway
   log: ~/.config/beets/import.log
   languages: en
 
-# Do not let beets manage paths — organizer does that
+# Naming convention — matches our library layout
+# Single-disc:  Artist/[Year] Album/01 - Title.ext
+# Multi-disc:   Artist/[Year] Album/101 - Title.ext
+# Compilation:  Various Artists/[Year] Album/01 - Title.ext
+# Singleton:    Artist/[Year] Title/01 - Title.ext
 paths:
-  default: $albumartist/$album/$track - $title
-  singleton: $artist/$title
-  comp: Various Artists/$album/$track - $title
+  mb_albumid::^$: _Unmatched/$albumartist/[$year] $album/$track - $title
+  default: $albumartist/[$year] $album/$track - $title
+  comp:    Various Artists/[$year] $album/$track - $title
+  singleton: $albumartist/[$year] $title/$track - $title
 
 plugins:
+  - musicbrainz     # MusicBrainz metadata source (required for autotagger)
   - chroma          # acoustic fingerprinting (needs chromaprint: brew install chromaprint)
   - fetchart        # download cover art
   - embedart        # embed cover art into files
-  - lyrics          # fetch lyrics (optional)
-  - mbsync          # sync tags from MusicBrainz using existing MBIDs
+  - mbsync          # re-sync tags using existing MusicBrainz IDs
   - missing         # report missing tracks in albums
   - duplicates      # find duplicate tracks
 
 musicbrainz:
   searchlimit: 10
 
+match:
+  strong_rec_thresh: 0.40   # auto-accept matches with distance ≤ 0.40 (~60%+ similarity)
+
 chroma:
-  auto: yes         # fingerprint files with no tags automatically
+  auto: yes
   fpcalc: /opt/homebrew/bin/fpcalc
 
 fetchart:
@@ -43,27 +53,7 @@ fetchart:
     - coverart       # Cover Art Archive (MusicBrainz)
     - itunes
     - amazon
-  store_source: yes
 
 embedart:
   auto: yes
   ifempty: yes      # only embed if no art already present
-
-# Write these tags to files
-tags:
-  - title
-  - artist
-  - albumartist
-  - album
-  - year
-  - tracknumber
-  - totaltracks
-  - discnumber
-  - totaldiscs
-  - genre
-  - mb_trackid
-  - mb_albumid
-  - mb_artistid
-  - mb_albumartistid
-  - releasetype
-  - compilation

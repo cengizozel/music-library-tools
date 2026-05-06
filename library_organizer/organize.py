@@ -302,8 +302,11 @@ def main():
     print(f"[{mode}] Library: {library_root}\n")
 
     album_dirs: set[Path] = set()
-    for root, _, files in os.walk(library_root):
+    for root, dirs, files in os.walk(library_root):
         p = Path(root)
+        if "_Unmatched" in p.parts:
+            dirs[:] = []
+            continue
         if any(Path(f).suffix.lower() in AUDIO_EXTENSIONS for f in files):
             # If this dir is a disc subfolder, register the parent as the album
             if DISC_FOLDER_RE.match(p.name):

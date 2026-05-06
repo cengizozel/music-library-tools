@@ -92,19 +92,22 @@ Artist/
 ## Workflow
 
 ```
-Incoming music (any state, any tags)
-  → beet import              — fetch correct tags from MusicBrainz, embed cover art
+Anything messy (any folder structure, any tags)
+  → beet import              — identify, tag, and move into clean library structure
   → FLAC Validator           — flag any non-FLAC files
   → Corruption Checker       — verify audio integrity
-  → Library Organizer        — rename and restructure based on tags (dry-run first)
   → FLAC-to-MP3 Sync         — push changes to MP3 mirror (microSD etc.)
 ```
 
-### Tagging with beets
+The Library Organizer is a separate tool for re-organizing an already-imported library (e.g. after changing naming conventions). It is not part of the regular intake flow.
 
-Beets queries MusicBrainz for metadata and writes correct tags to your files. It uses acoustic fingerprinting for files with missing or wrong tags.
+### Importing with beets
 
-Acoustic fingerprinting requires `chromaprint` (`fpcalc` binary) — this is a native library with no Python-only alternative:
+Beets identifies music via MusicBrainz (using existing tags or acoustic fingerprinting), writes corrected tags, and moves files into the library in the correct structure — all in one step. It accepts any messy input.
+
+Before first use, set `directory` in [beets/config.yaml](beets/config.yaml) to your library path.
+
+Acoustic fingerprinting requires `chromaprint` — no Python-only alternative exists:
 
 ```bash
 # macOS
@@ -115,16 +118,14 @@ sudo apt install libchromaprint-tools
 ```
 
 ```bash
-# tag a folder of music (timid mode — confirms uncertain matches)
+# import new music (run interactively in your terminal)
 venv/bin/beet -c beets/config.yaml import ~/Music/Incoming
 
-# re-sync tags for files that already have MusicBrainz IDs
+# re-sync tags for files already in the library using their MusicBrainz IDs
 venv/bin/beet -c beets/config.yaml mbsync
 ```
 
-Beets is interactive — run it directly in your terminal. It will ask you to confirm matches it's unsure about.
-
-Beets does **not** move or rename files — the Library Organizer handles that after tagging.
+Beets will ask for confirmation when it is not confident about a match. Anything above 85% similarity is accepted automatically.
 
 ## Philosophy
 
