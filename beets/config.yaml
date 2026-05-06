@@ -9,7 +9,7 @@ directory: /Users/cengizozel/Documents/Projects/music-library-tools/sample_libra
 library: ~/.config/beets/music-library-tools.db
 
 import:
-  move: yes         # move files out of _Unmatched into the library
+  move: yes         # move files out of _Staging into the library
   write: yes        # write corrected tags to files
   timid: no
   quiet_fallback: asis  # if no strong match found, keep existing tags and move anyway
@@ -22,7 +22,7 @@ import:
 # Compilation:  Various Artists/[Year] Album/01 - Title.ext
 # Singleton:    Artist/[Year] Title/01 - Title.ext
 paths:
-  mb_albumid::^$: _Unmatched/$albumartist/[$year] $album/$track - $title
+  mb_albumid::^$: _Staging/$albumartist/[$year] $album/$track - $title
   default: $albumartist/[$year] $album/$track - $title
   comp:    Various Artists/[$year] $album/$track - $title
   singleton: $albumartist/[$year] $title/$track - $title

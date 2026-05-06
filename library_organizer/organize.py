@@ -304,7 +304,7 @@ def main():
     album_dirs: set[Path] = set()
     for root, dirs, files in os.walk(library_root):
         p = Path(root)
-        if "_Unmatched" in p.parts:
+        if "_Staging" in p.parts:
             dirs[:] = []
             continue
         if any(Path(f).suffix.lower() in AUDIO_EXTENSIONS for f in files):
