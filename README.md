@@ -58,6 +58,21 @@ Phases, automatic unless a decision is genuinely yours to make:
    the folder + albumartist follow it, per-track artist keeps the full credit.
 8. **Post-check & sync** — imported files re-verified; optional MP3 mirror sync.
 
+### Pushing the mirror to devices
+
+The MP3 mirror is converted once, locally; devices get a plain rsync. Both steps
+are incremental, so adding two albums means seconds of copying, not a full rewrite:
+
+```bash
+# iPod (Rockbox), BlackBerry SD card, etc. — always target the device's Music
+# folder, NEVER its root (.rockbox lives next to Music/ and --delete would eat it)
+rsync -rt --modify-window=2 --delete ~/Music/MP3/ "/run/media/$USER/CENGIZ IPOD/Music/"
+```
+
+`-rt` because FAT has no permissions to preserve; `--modify-window=2` because FAT
+rounds timestamps to 2 s (without it rsync re-copies everything every run);
+`--delete` so library deletions and moves disappear from the device too.
+
 ### Decisions are remembered
 
 Every answer is stored in `<library>/.music-tools/decisions.json`, keyed by
