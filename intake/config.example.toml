@@ -1,0 +1,21 @@
+# intake configuration — copy to <repo>/intake.toml and edit.
+
+# The FLAC library (source of truth). _Staging lives inside it.
+library = "/home/cengiz/Music/Library"
+
+# Optional: override the staging directory (default: <library>/_Staging)
+# staging = "/home/cengiz/Music/Library/_Staging"
+
+# Optional: MP3 mirror (microSD, iPod...). Leave empty to disable sync.
+mp3_target = ""
+bitrate = "320k"
+
+# Run the MP3 sync automatically at the end of every intake run.
+auto_sync = false
+
+# Parallel workers for hashing / corruption checks / conversions.
+jobs = 4
+
+# Advanced: paths default to sensible places, override only if needed.
+# beets_config = "/path/to/beets/config.yaml"   # default: <repo>/beets/config.yaml
+# beets_db = "..."                              # default: <library>/.music-tools/beets.db

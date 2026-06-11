@@ -1,54 +1,71 @@
 # Beets config — tags and organizes music into the library in one step.
 # Accepts any messy input structure. Outputs a clean, consistently named library.
 #
-# Usage:
+# Normally driven by intake/intake.py, which overrides `directory` and the db
+# path per run (beet -d / -l). Standalone use:
 #   venv/bin/beet -c beets/config.yaml import /path/to/incoming/music
 
-# Set this to your actual library directory
-directory: /Users/cengizozel/Documents/Projects/music-library-tools/sample_library
+directory: ~/Music/Library
 library: ~/.config/beets/music-library-tools.db
 
 import:
-  move: yes         # move files out of _Staging into the library
-  write: yes        # write corrected tags to files
+  move: yes             # move files out of _Staging into the library
+  write: yes            # write corrected tags to files
   timid: no
-  quiet_fallback: asis  # if no strong match found, keep existing tags and move anyway
+  quiet_fallback: skip  # quiet mode: unmatched albums stay in place, untouched
+                        # (the intake pipeline owns unmatched handling)
   log: ~/.config/beets/import.log
   languages: en
 
-# Naming convention — matches our library layout
+# Reissues file under their original year ([1997] Homework, not [2022])
+original_date: yes
+
+# Track numbers restart per disc; combined with the $disc prefix below this
+# yields the library convention for multi-disc albums: 101, 102, ... 201, 202
+per_disc_numbering: yes
+
+# Naming convention — matches the library layout
 # Single-disc:  Artist/[Year] Album/01 - Title.ext
-# Multi-disc:   Artist/[Year] Album/101 - Title.ext
+# Multi-disc:   Artist/[Year] Album/101 - Title.ext   (disc 1), 201 - ... (disc 2)
 # Compilation:  Various Artists/[Year] Album/01 - Title.ext
-# Singleton:    Artist/[Year] Title/01 - Title.ext
+# Singleton:    Artist/[Year] Singles/Title.ext
 paths:
-  mb_albumid::^$: _Staging/$albumartist/[$year] $album/$track - $title
-  default: $albumartist/[$year] $album/$track - $title
-  comp:    Various Artists/[$year] $album/$track - $title
-  singleton: $albumartist/[$year] $title/$track - $title
+  default: $albumartist/[$year] $album/$disc_prefix$track - $title
+  comp: Various Artists/[$year] $album/$disc_prefix$track - $title
+  singleton: $albumartist/[$year] Singles/$title
 
 plugins:
   - musicbrainz     # MusicBrainz metadata source (required for autotagger)
-  - chroma          # acoustic fingerprinting (needs chromaprint: brew install chromaprint)
-  - fetchart        # download cover art
+  - chroma          # acoustic fingerprinting (fpcalc binary, see intake docs)
+  - inline          # computed fields ($multidisc below)
+  - fetchart        # cover art
   - embedart        # embed cover art into files
   - mbsync          # re-sync tags using existing MusicBrainz IDs
   - missing         # report missing tracks in albums
   - duplicates      # find duplicate tracks
 
+item_fields:
+  # '' for single-disc, unpadded disc number for multi-disc: 101, 201, ...
+  disc_prefix: str(disc) if disctotal and disctotal > 1 else ''
+
 musicbrainz:
   searchlimit: 10
 
 match:
-  strong_rec_thresh: 0.40   # auto-accept matches with distance ≤ 0.40 (~60%+ similarity)
+  # Auto-accept (quiet mode) only matches with distance <= 0.15 (~85%+ similar).
+  # Weaker candidates fall through to the interactive resolution phase instead
+  # of being silently mistagged.
+  strong_rec_thresh: 0.15
 
 chroma:
   auto: yes
-  fpcalc: /opt/homebrew/bin/fpcalc
 
 fetchart:
   auto: yes
+  minwidth: 600     # don't settle for a tiny local scan when a 1000px+
+                    # cover exists next to it or on Cover Art Archive
   sources:
+    - filesystem     # the rip's own cover.jpg beats anything downloaded
     - coverart       # Cover Art Archive (MusicBrainz)
     - itunes
     - amazon

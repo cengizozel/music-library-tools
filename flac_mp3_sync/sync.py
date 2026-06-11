@@ -25,11 +25,24 @@ from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".gif"}
+LYRIC_EXTENSIONS = {".lrc"}
+DEFAULT_EXCLUDES = ["_Staging", ".music-tools"]
 
 
 def target_path(src: Path, source_root: Path, target_root: Path) -> Path:
     relative = src.relative_to(source_root)
     return target_root / relative.with_suffix(".mp3")
+
+
+def _exists_ci(path: Path) -> bool:
+    """Exists, matching the file name case-insensitively (Song.FLAC vs .flac)."""
+    if path.exists():
+        return True
+    parent = path.parent
+    if not parent.is_dir():
+        return False
+    name = path.name.lower()
+    return any(c.name.lower() == name for c in parent.iterdir())
 
 
 def needs_update(src: Path, dst: Path) -> bool:
@@ -40,6 +53,8 @@ def needs_update(src: Path, dst: Path) -> bool:
 
 def convert(src: Path, dst: Path, bitrate: str) -> tuple[Path, bool, str]:
     dst.parent.mkdir(parents=True, exist_ok=True)
+    # write to a temp file so a failed conversion never truncates a good target
+    tmp = dst.with_suffix(dst.suffix + ".part.mp3")
     result = subprocess.run(
         [
             "ffmpeg", "-y",
@@ -49,13 +64,19 @@ def convert(src: Path, dst: Path, bitrate: str) -> tuple[Path, bool, str]:
             "-codec:a", "libmp3lame",
             "-b:a", bitrate,
             "-map", "0:a",
-            str(dst),
+            "-f", "mp3",
+            str(tmp),
         ],
         capture_output=True,
         text=True,
     )
     ok = result.returncode == 0
-    error = result.stderr.strip() if not ok else ""
+    if ok:
+        os.replace(tmp, dst)
+        error = ""
+    else:
+        tmp.unlink(missing_ok=True)
+        error = result.stderr.strip()
     return src, ok, error
 
 
@@ -68,10 +89,11 @@ def copy_file(src: Path, dst: Path) -> tuple[Path, bool, str]:
         return src, False, str(e)
 
 
-def sync_images(source_root: Path, target_root: Path):
-    for root, _, files in os.walk(source_root):
+def sync_images(source_root: Path, target_root: Path, excludes: list[str]):
+    for root, dirs, files in os.walk(source_root):
+        dirs[:] = [d for d in dirs if d not in excludes]
         for fname in files:
-            if Path(fname).suffix.lower() in IMAGE_EXTENSIONS:
+            if Path(fname).suffix.lower() in IMAGE_EXTENSIONS | LYRIC_EXTENSIONS:
                 src = Path(root) / fname
                 dst = target_root / src.relative_to(source_root)
                 dst.parent.mkdir(parents=True, exist_ok=True)
@@ -79,21 +101,25 @@ def sync_images(source_root: Path, target_root: Path):
                     shutil.copy2(src, dst)
 
 
-def remove_orphans(source_root: Path, target_root: Path) -> list[Path]:
+def remove_orphans(source_root: Path, target_root: Path, excludes: list[str]) -> list[Path]:
     removed = []
     for root, dirs, files in os.walk(target_root, topdown=False):
         for fname in files:
             tgt = Path(root) / fname
             ext = tgt.suffix.lower()
             relative = tgt.relative_to(target_root)
+            # excluded names are out of scope entirely: never sync, never delete
+            if any(part in excludes for part in relative.parts):
+                continue
             if ext == ".mp3":
-                # valid if source has a .flac OR a .mp3 at the same relative path
-                has_flac = (source_root / relative.with_suffix(".flac")).exists()
-                has_mp3  = (source_root / relative).exists()
+                # valid if source has a .flac OR a .mp3 at the same relative
+                # path — extension case-insensitively (Song.FLAC mirrors too)
+                has_flac = _exists_ci(source_root / relative.with_suffix(".flac"))
+                has_mp3  = _exists_ci(source_root / relative)
                 if not has_flac and not has_mp3:
                     tgt.unlink()
                     removed.append(tgt)
-            elif ext in IMAGE_EXTENSIONS:
+            elif ext in IMAGE_EXTENSIONS | LYRIC_EXTENSIONS:
                 if not (source_root / relative).exists():
                     tgt.unlink()
                     removed.append(tgt)
@@ -103,9 +129,10 @@ def remove_orphans(source_root: Path, target_root: Path) -> list[Path]:
     return removed
 
 
-def collect(source_root: Path) -> tuple[list[Path], list[Path]]:
+def collect(source_root: Path, excludes: list[str]) -> tuple[list[Path], list[Path]]:
     flacs, mp3s = [], []
-    for root, _, files in os.walk(source_root):
+    for root, dirs, files in os.walk(source_root):
+        dirs[:] = [d for d in dirs if d not in excludes]
         for fname in files:
             p = Path(root) / fname
             ext = p.suffix.lower()
@@ -126,7 +153,11 @@ def main():
                         help="Parallel threads (default: 4)")
     parser.add_argument("--dry-run", action="store_true",
                         help="Show what would happen without making changes")
+    parser.add_argument("--exclude", action="append", default=[], metavar="NAME",
+                        help="additional dir names to skip "
+                             "(_Staging and .music-tools are always skipped)")
     args = parser.parse_args()
+    excludes = DEFAULT_EXCLUDES + args.exclude
 
     if not shutil.which("ffmpeg"):
         print("Error: 'ffmpeg' not found. Install it with: brew install ffmpeg")
@@ -146,21 +177,49 @@ def main():
     if not args.dry_run:
         target_root.mkdir(parents=True, exist_ok=True)
 
+    # --- collect ---
+    flac_files, mp3_files = collect(source_root, excludes)
+
+    # Safety: an empty source against a populated mirror is almost always an
+    # unmounted drive or wrong path — orphan removal would wipe the mirror.
+    if not flac_files and not mp3_files:
+        mirror_has_audio = target_root.exists() and any(target_root.rglob("*.mp3"))
+        if mirror_has_audio:
+            print("Error: source contains no audio but the target mirror is non-empty.\n"
+                  "Refusing to delete the mirror. (Is the source drive mounted?)")
+            sys.exit(1)
+
+    # Safety: a derived MP3 mirror never contains FLACs. If the target does,
+    # it is probably a real library — refuse to delete anything from it.
+    if target_root.exists() and any(target_root.rglob("*.flac")):
+        print(f"Error: target '{target_root}' contains FLAC files — that looks like a\n"
+              "library, not a derived MP3 mirror. Refusing to sync into it.")
+        sys.exit(1)
+
     # --- orphan removal ---
     if target_root.exists():
-        removed = remove_orphans(source_root, target_root) if not args.dry_run else []
+        removed = remove_orphans(source_root, target_root, excludes) if not args.dry_run else []
         if removed:
             print(f"Removed {len(removed)} orphaned file(s):")
             for p in sorted(removed):
                 print(f"  - {p.relative_to(target_root)}")
             print()
 
-    # --- image sync ---
+    # --- image/lyrics sync ---
     if not args.dry_run:
-        sync_images(source_root, target_root)
+        sync_images(source_root, target_root, excludes)
 
-    # --- collect ---
-    flac_files, mp3_files = collect(source_root)
+    # Song.flac and Song.mp3 in the same dir both target Song.mp3 — two
+    # concurrent writers on one file. Prefer the FLAC (better source).
+    flac_targets = {target_path(f, source_root, target_root) for f in flac_files}
+    clashing = [m for m in mp3_files
+                if target_path(m, source_root, target_root) in flac_targets]
+    if clashing:
+        print(f"WARNING: {len(clashing)} mp3(s) share a target with a flac of the "
+              f"same name — converting the flac, skipping the mp3 copy:")
+        for m in sorted(clashing):
+            print(f"  - {m.relative_to(source_root)}")
+        mp3_files = [m for m in mp3_files if m not in set(clashing)]
 
     flacs_to_convert = [f for f in flac_files if needs_update(f, target_path(f, source_root, target_root))]
     mp3s_to_copy     = [f for f in mp3_files  if needs_update(f, target_path(f, source_root, target_root))]

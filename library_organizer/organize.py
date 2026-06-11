@@ -38,12 +38,13 @@ except ImportError:
 AUDIO_EXTENSIONS  = {".flac", ".mp3"}
 IMAGE_EXTENSIONS  = {".jpg", ".jpeg", ".png", ".bmp"}
 VARIOUS_ARTISTS   = {"various artists", "various", "va", "v/a", "v.a.", "v.a"}
-DISC_FOLDER_RE    = re.compile(r'^(cd|disc|disk)\s*(\d+)$', re.IGNORECASE)
+DISC_FOLDER_RE    = re.compile(
+    r'^(?:\d+["”]?\s+)?(?:cd|disc|disk|vinyl|lp)\s*0*(\d+)$', re.IGNORECASE)
 
 
 def disc_number_from_name(name: str) -> int:
     m = DISC_FOLDER_RE.match(name.strip())
-    return int(m.group(2)) if m else 0
+    return int(m.group(1)) if m else 0
 
 
 def strip_disc_suffix(album: str) -> str:
@@ -274,10 +275,26 @@ def plan_album(source_dir: Path, library_root: Path) -> AlbumPlan:
         fname = build_filename(track_num, disc_num, is_multidisc, title, ext)
         plan.moves.append((audio, plan.target_dir / fname))
 
-    # Image files from source dir travel with the album
-    for f in source_dir.iterdir():
-        if f.is_file() and f.suffix.lower() in IMAGE_EXTENSIONS:
-            plan.moves.append((f, plan.target_dir / f.name))
+        # companion files (.lrc lyrics, per-track .cue) travel and rename in
+        # lockstep with their track so the pairing survives the rename
+        for comp_ext in (".lrc", ".cue"):
+            comp = audio.with_suffix(comp_ext)
+            if comp.exists():
+                plan.moves.append(
+                    (comp, plan.target_dir / (Path(fname).stem + comp_ext)))
+
+    # Image files travel with the album — from the album dir AND disc subfolders
+    taken_names: set[str] = set()
+    image_dirs = [source_dir] + disc_subs
+    for idx, d in enumerate(image_dirs):
+        for f in sorted(d.iterdir()):
+            if not (f.is_file() and f.suffix.lower() in IMAGE_EXTENSIONS):
+                continue
+            name = f.name
+            if name.lower() in taken_names:
+                name = f"{f.stem} (disc {disc_number_from_name(d.name) or idx}){f.suffix}"
+            taken_names.add(name.lower())
+            plan.moves.append((f, plan.target_dir / name))
 
     return plan
 
@@ -343,7 +360,16 @@ def main():
         src_rel = p.source_dir.relative_to(library_root)
         dst_rel = p.target_dir.relative_to(library_root)
         print(f"  [{p.release_type.upper():12s}] {src_rel}")
-        print(f"  {'':14s}→ {dst_rel}\n")
+        print(f"  {'':14s}→ {dst_rel}")
+        # show per-file renames so flattening/numbering is reviewable pre-apply
+        for src, dst in p.moves:
+            if src.name != dst.name or src.parent != p.source_dir:
+                try:
+                    src_disp = src.relative_to(p.source_dir)
+                except ValueError:
+                    src_disp = src.name
+                print(f"  {'':16s}{src_disp} → {dst.name}")
+        print()
 
     if not args.apply:
         print("Run with --apply to move files.")
@@ -361,6 +387,10 @@ def main():
                 continue
             try:
                 dst.parent.mkdir(parents=True, exist_ok=True)
+                if dst.exists():
+                    print(f"  ERROR {src.name}: destination exists, not overwriting: {dst}")
+                    errors += 1
+                    continue
                 shutil.move(str(src), dst)
                 moved += 1
             except Exception as e:
@@ -376,6 +406,10 @@ def main():
 
         if p.source_dir.exists() and p.source_dir != p.target_dir:
             try:
+                # emptied disc subfolders first, then the album dir itself
+                for sub in get_disc_subfolders(p.source_dir):
+                    if not any(sub.iterdir()):
+                        sub.rmdir()
                 if not any(p.source_dir.iterdir()):
                     p.source_dir.rmdir()
             except Exception:

@@ -1,2 +1,5 @@
 sample_library/
 venv/
+intake.toml
+__pycache__/
+.pytest_cache/

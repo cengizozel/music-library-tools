@@ -1,8 +1,13 @@
-# library_organizer
+# intake pipeline + library_organizer
 mutagen
 requests
+pyyaml
 
-# tagger
+# tagger (beets + acoustic fingerprinting; fpcalc binary installed separately,
+# see README "One-time setup")
 beets
 pyacoustid
 beautifulsoup4
+
+# tests
+pytest

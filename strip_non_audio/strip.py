@@ -1,8 +1,14 @@
 #!/usr/bin/env python3
 """
-Deletes all non-audio files from a directory tree before import.
-Removes .log, .m3u, .txt, .jpg, .db, and any other non-FLAC/MP3 files.
-Also removes empty directories left behind.
+Deletes junk files from a directory tree before import — .nfo, .log, .m3u,
+.txt, Thumbs.db, etc. Also removes empty directories left behind.
+
+KEPT (same policy as the intake pipeline):
+  - any audio format (never deletes audio, even formats the library
+    doesn't use — those are decisions, not junk)
+  - .lrc lyrics, cover images (.jpg/.jpeg/.png)
+  - .pdf booklets and .cue sheets (useful for identifying releases)
+  - .keep markers; everything under a _Corrupt quarantine dir
 
 Dry-run by default. Use --apply to delete.
 
@@ -16,12 +22,18 @@ import sys
 import argparse
 from pathlib import Path
 
-AUDIO_EXTENSIONS = {".flac", ".mp3"}
+AUDIO_EXTENSIONS = {".flac", ".mp3", ".m4a", ".wav", ".aiff", ".aif", ".ogg",
+                    ".oga", ".opus", ".wma", ".ape", ".wv", ".alac", ".aac",
+                    ".mpc", ".tak", ".shn", ".dsf", ".dff", ".dts", ".m4b", ".mka"}
+COMPANION_EXTENSIONS = {".lrc", ".jpg", ".jpeg", ".png", ".bmp", ".gif",
+                        ".webp", ".tif", ".tiff", ".pdf", ".cue"}
+KEEP_NAMES = {".keep"}
+QUARANTINE = "_Corrupt"
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Remove non-audio files from an incoming music directory."
+        description="Remove junk (non-audio, non-companion) files from an incoming music directory."
     )
     parser.add_argument("directory", help="Path to the incoming directory")
     parser.add_argument("--apply", action="store_true",
@@ -36,11 +48,16 @@ def main():
     mode = "APPLY" if args.apply else "DRY RUN"
     print(f"[{mode}] Scanning: {directory}\n")
 
+    kept_ext = AUDIO_EXTENSIONS | COMPANION_EXTENSIONS
     to_delete = []
     for root, dirs, files in os.walk(directory):
+        rp = Path(root)
+        if QUARANTINE in rp.relative_to(directory).parts:
+            dirs[:] = []
+            continue
         for fname in files:
-            p = Path(root) / fname
-            if p.suffix.lower() not in AUDIO_EXTENSIONS and fname != ".keep":
+            p = rp / fname
+            if p.suffix.lower() not in kept_ext and fname not in KEEP_NAMES:
                 to_delete.append(p)
 
     if not to_delete:
@@ -56,7 +73,7 @@ def main():
     if args.apply:
         for root, dirs, files in os.walk(directory, topdown=False):
             p = Path(root)
-            if p == directory:
+            if p == directory or QUARANTINE in p.relative_to(directory).parts:
                 continue
             try:
                 p.rmdir()
