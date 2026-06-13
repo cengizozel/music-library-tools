@@ -108,6 +108,7 @@ The intake pipeline drives these, but each still works on its own:
 | `flac_validator/validate.py LIB` | flag non-FLAC audio (extension + magic bytes); `.flac_exempt` lists exempt dirs |
 | `corruption_checker/check.py LIB [--jobs N]` | `flac --test` / ffmpeg decode of every file |
 | `flac_mp3_sync/sync.py LIB MP3DIR [--dry-run]` | one-way FLAC->MP3 mirror: convert new/changed, delete orphans |
+| `cover_normalizer/normalize.py LIB [--apply]` | dedupe cover art, drop WMP thumbnails, `.jpeg`->`.jpg`, lossless progressive->baseline JPEG for Rockbox/PictureFlow |
 | `strip_non_audio/strip.py DIR [--apply]` | delete junk files (keeps all audio, `.lrc`, images, `.pdf`/`.cue`) |
 | `library_organizer/organize.py LIB [--apply]` | tag-based restructure of an existing library (multi-disc flattening, Various Artists, cover art) |
 | `beets/config.yaml` | beets config: MusicBrainz autotagger, naming scheme, art |

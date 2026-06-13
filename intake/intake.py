@@ -20,6 +20,7 @@ holds audio (deferred questions, skipped or held-back units).
 """
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -41,6 +42,12 @@ from artist_normalizer import detect, fold
 from beets_runner import BeetsRunner
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO_ROOT / "cover_normalizer"))
+try:
+    from normalize import normalize_album_covers
+except ImportError:
+    def normalize_album_covers(_d, apply=True):  # graceful no-op if tool absent
+        return 0
 
 CORE_AUDIO = {".flac", ".mp3"}
 OTHER_AUDIO = {".m4a", ".wav", ".aiff", ".aif", ".ogg", ".oga", ".opus", ".wma",
@@ -228,6 +235,14 @@ def sanitize(name: str, max_bytes: int = 180) -> str:
     while len(name.encode("utf-8")) > max_bytes:
         name = name[:-1].rstrip(". ") or "_"
     return name
+
+
+_THUMBNAIL_JUNK_RE = re.compile(r"^(albumartsmall|albumart_\{)", re.IGNORECASE)
+
+
+def _is_thumbnail_junk(name: str) -> bool:
+    """Windows Media Player thumbnail caches that should never be kept as art."""
+    return bool(_THUMBNAIL_JUNK_RE.match(name))
 
 
 def unique_path(p: Path) -> Path:
@@ -991,9 +1006,31 @@ class Pipeline:
                 self.ui.say(f"      companions kept in staging (no album dir to "
                             f"salvage into): {unit.dir.relative_to(self.staging)}")
                 return
+            # Hash images already in the album dir (beets' fetchart cover, etc.)
+            # so the rip's own art is not salvaged as a duplicate. This is what
+            # otherwise produced 'cover (1).jpg' / WMP-thumbnail clutter.
+            existing_img_hashes = {self._file_sha1(p) for p in salvage_dir.iterdir()
+                                   if p.is_file() and p.suffix.lower() in IMAGES}
             for f in salvageable:
+                if f.suffix.lower() in IMAGES:
+                    if _is_thumbnail_junk(f.name):
+                        continue
+                    if self._file_sha1(f) in existing_img_hashes:
+                        continue  # identical art already present
+                    existing_img_hashes.add(self._file_sha1(f))
                 shutil.move(str(f), unique_path(salvage_dir / f.name))
         shutil.rmtree(unit.dir, ignore_errors=True)
+
+    @staticmethod
+    def _file_sha1(p: Path) -> str:
+        h = hashlib.sha1()
+        try:
+            with open(p, "rb") as f:
+                while chunk := f.read(1 << 20):
+                    h.update(chunk)
+        except OSError:
+            return ""
+        return h.hexdigest()
 
     # --- phase 7: interactive resolution ---
 
@@ -1361,6 +1398,7 @@ class Pipeline:
     def phase_post(self):
         self.ui.head("Phase 8/8 · Post-checks")
         bad = []
+        cover_fixes = 0
         for album in self.imported_albums:
             # normalization may have re-pathed the album since import
             fields = self.runner.album_fields(album["id"])
@@ -1370,11 +1408,17 @@ class Pipeline:
             for f in apath.rglob("*"):
                 if f.suffix.lower() == ".flac" and sniff(f) not in ("flac",):
                     bad.append(f)
+            # device-ready cover art: dedupe + drop WMP junk + .jpeg->.jpg +
+            # progressive->baseline (lossless), so Rockbox/PictureFlow can read it
+            if not self.args.dry_run:
+                cover_fixes += normalize_album_covers(apath)
         if bad:
             for f in bad:
                 self.ui.say(f"  WARNING bad flac after import: {f}")
         else:
             self.ui.say(f"  verified {len(self.imported_albums)} imported album(s)")
+        if cover_fixes:
+            self.ui.say(f"  normalized cover art: {cover_fixes} change(s)")
 
     def phase_sync(self):
         if not self.mp3_target or self.args.dry_run:

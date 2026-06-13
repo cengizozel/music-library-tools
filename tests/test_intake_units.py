@@ -492,3 +492,55 @@ def test_failed_attempt_memory(tmp_path):
 def test_unicode_x_and_with_separators(raw, expected):
     s = detect(raw, set())
     assert s is not None and s.suggestion == expected
+
+
+# ---------------------------------------------------------- cover normalizer
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "cover_normalizer"))
+import normalize as cov
+
+
+def _img(p: Path, data: bytes):
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_bytes(data)
+
+
+def test_cover_dedupe_and_junk(tmp_path):
+    d = tmp_path / "Album"; d.mkdir()
+    (d / "01.flac").write_bytes(b"fLaC")
+    _img(d / "cover.jpg", b"JPEGDATA-A")
+    _img(d / "folder.jpg", b"JPEGDATA-A")        # exact dup of cover
+    _img(d / "AlbumArtSmall.jpg", b"wmpjunk")    # junk
+    _img(d / "back.jpg", b"JPEGDATA-B")          # distinct -> kept
+    changes = cov.normalize_album_covers(d, apply=True)
+    names = sorted(p.name for p in d.iterdir() if p.suffix == ".jpg")
+    assert "cover.jpg" in names           # primary kept
+    assert "back.jpg" in names            # distinct art kept
+    assert "folder.jpg" not in names      # exact dup removed
+    assert "AlbumArtSmall.jpg" not in names  # junk removed
+    assert changes >= 2
+
+
+def test_cover_jpeg_extension_renamed(tmp_path):
+    d = tmp_path / "Album"; d.mkdir()
+    (d / "01.flac").write_bytes(b"fLaC")
+    _img(d / "cover.jpeg", b"JPEGDATA")          # .jpeg invisible to Rockbox
+    cov.normalize_album_covers(d, apply=True)
+    assert (d / "cover.jpg").exists()
+    assert not (d / "cover.jpeg").exists()
+
+
+def test_cover_promotes_primary_to_cover(tmp_path):
+    d = tmp_path / "Album"; d.mkdir()
+    (d / "01.flac").write_bytes(b"fLaC")
+    _img(d / "folder.jpg", b"ART")               # no cover.* present
+    cov.normalize_album_covers(d, apply=True)
+    assert (d / "cover.jpg").exists()
+
+
+def test_cover_junk_name_detection():
+    assert cov.is_junk("AlbumArtSmall.jpg")
+    assert cov.is_junk("AlbumArt_{12345}_Large.jpg")
+    assert cov.is_junk("Thumbs.db")
+    assert not cov.is_junk("cover.jpg")
+    assert not cov.is_junk("booklet-03.jpg")
