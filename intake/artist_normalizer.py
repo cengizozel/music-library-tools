@@ -53,7 +53,8 @@ _SEPARATORS: list[tuple[str, re.Pattern, bool]] = [
     ("ampersand", re.compile(r"\s+&\s+"), True),
     ("vs", re.compile(r"\s+vs\.?\s+", re.IGNORECASE), True),
     ("slash", re.compile(r"\s+/\s+|/"), True),
-    ("x", re.compile(r"\s+[xX]\s+"), True),
+    ("x", re.compile(r"\s+[xX×]\s+"), True),
+    ("with", re.compile(r"\s+with\s+", re.IGNORECASE), True),
     ("comma", re.compile(r",\s+"), False),
 ]
 

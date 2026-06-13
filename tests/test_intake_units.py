@@ -483,3 +483,12 @@ def test_failed_attempt_memory(tmp_path):
     s.record_failed_attempt("album:x")
     assert s.failed_recently("album:x")
     assert not s.failed_recently("album:x", hours=0)
+
+
+@pytest.mark.parametrize("raw,expected", [
+    ("$uicideboy$ × Getter", "$uicideboy$"),
+    ("Metallica with Michael Kamen conducting the San Francisco Symphony", "Metallica"),
+])
+def test_unicode_x_and_with_separators(raw, expected):
+    s = detect(raw, set())
+    assert s is not None and s.suggestion == expected
