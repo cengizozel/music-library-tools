@@ -38,6 +38,7 @@ class DecisionStore:
             "tracks": {},
             "albums": {},
             "artist_map": {},
+            "attempts": {},   # album_key -> iso time of last failed quiet match
         }
         if self.path.exists():
             loaded = json.loads(self.path.read_text())
@@ -46,7 +47,7 @@ class DecisionStore:
                     f"{self.path} was written by a newer tool "
                     f"(schema {loaded.get('schema_version')} > {SCHEMA_VERSION})"
                 )
-            for section in ("tracks", "albums", "artist_map"):
+            for section in ("tracks", "albums", "artist_map", "attempts"):
                 self.data[section].update(loaded.get(section, {}))
 
     def save(self):
@@ -108,6 +109,25 @@ class DecisionStore:
         if best and best_overlap >= threshold:
             return best
         return None
+
+    # --- match attempts ---
+
+    def failed_recently(self, album_key: str, hours: float = 72.0) -> bool:
+        """True if a quiet MusicBrainz match for this album failed within
+        `hours` — no point re-querying the same data."""
+        raw = self.data["attempts"].get(album_key)
+        if not raw:
+            return False
+        try:
+            then = datetime.strptime(raw, "%Y-%m-%dT%H:%M:%SZ").replace(
+                tzinfo=timezone.utc)
+        except ValueError:
+            return False
+        return (datetime.now(timezone.utc) - then).total_seconds() < hours * 3600
+
+    def record_failed_attempt(self, album_key: str):
+        self.data["attempts"][album_key] = _now()
+        self.save()
 
     # --- artist map ---
 

@@ -22,6 +22,7 @@ import yaml
 SEP = "\x1f"
 ALBUM_FMT = SEP.join(["$added", "$id", "$mb_albumid", "$albumartist", "$album", "$year", "$path"])
 ITEM_FMT = SEP.join(["$disc", "$track", "$title", "$path"])
+COMPOSER_FMT = SEP.join(["$composer", "$parent_composer", "$albumartist_sort"])
 
 
 class BeetsRunner:
@@ -155,6 +156,25 @@ class BeetsRunner:
             return None
         return {"id": parts[1], "mb_albumid": parts[2], "albumartist": parts[3],
                 "album": parts[4], "year": parts[5], "path": parts[6]}
+
+    def album_composer_info(self, beets_album_id: str) -> tuple[set[str], str]:
+        """(composer tag values of the album's items, albumartist_sort).
+        Composer evidence comes from $composer or parentwork's $parent_composer
+        (classical releases often carry only the latter)."""
+        result = self._run(["ls", "-f", COMPOSER_FMT, f"album_id:{beets_album_id}"])
+        composers: set[str] = set()
+        aa_sort = ""
+        for line in (result.stdout or "").splitlines():
+            parts = line.split(SEP)
+            if len(parts) != 3:
+                continue
+            for value in (parts[0], parts[1]):
+                value = value.strip()
+                # beets prints the literal field name when a field is unset
+                if value and not value.startswith("$"):
+                    composers.add(value)
+            aa_sort = aa_sort or parts[2].strip()
+        return composers, aa_sort
 
     # --- modifications ---
 

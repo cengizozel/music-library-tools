@@ -4,6 +4,7 @@ Expect-style driver for interactive intake runs in tests.
 
 Usage:
     venv/bin/python tests/drive_intake.py RULES_FILE [-- intake args...]
+    venv/bin/python tests/drive_intake.py RULES_FILE --cmd prog arg...   # drive any command
 
 RULES_FILE: JSON list of [pattern, answer] pairs. When an input prompt
 ("  > " marker) appears, the most recent output is matched against the
@@ -27,12 +28,16 @@ PROMPT = "  > "
 def main():
     rules_file = sys.argv[1]
     extra = sys.argv[2:]
-    if extra and extra[0] == "--":
-        extra = extra[1:]
+    if extra and extra[0] == "--cmd":
+        cmd = extra[1:]
+    else:
+        if extra and extra[0] == "--":
+            extra = extra[1:]
+        cmd = [sys.executable, "-u", str(REPO / "intake" / "intake.py"), *extra]
     rules = [(re.compile(p, re.S), a) for p, a in json.loads(Path(rules_file).read_text())]
 
     proc = subprocess.Popen(
-        [sys.executable, "-u", str(REPO / "intake" / "intake.py"), *extra],
+        cmd,
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
         text=True, bufsize=0,
     )
@@ -42,13 +47,14 @@ def main():
 
     BEETS_ENDINGS = ("abort?", "release id:", "search:", "search terms:",
                      "merge all?", "(y/n)?", "keep both?")
+    numbered = re.compile(r"enter one of [^\n]*:$")
 
     def at_prompt(w: str) -> bool:
         if w.endswith(PROMPT):
             return True
         # beets TUI prompts have well-known literal endings (case-insensitive)
         plain = ansi.sub("", w).rstrip(" ").lower()
-        return plain.endswith(BEETS_ENDINGS)
+        return plain.endswith(BEETS_ENDINGS) or bool(numbered.search(plain[-120:]))
 
     try:
         while True:
@@ -60,9 +66,11 @@ def main():
             sys.stdout.write(ch)
             sys.stdout.flush()
             if at_prompt(window):
-                # Match only the current question block (last 8 lines), not
-                # stale output from earlier phases.
-                context = ansi.sub("", "\n".join(window.splitlines()[-8:]))
+                # Match only the current question block. The window resets
+                # after every answer, so it never contains a previous question
+                # — but beets candidate listings can be long, so keep enough
+                # lines for the "Match (NN%)" header to stay in scope.
+                context = ansi.sub("", "\n".join(window.splitlines()[-80:]))
                 answer = None
                 for pattern, ans in rules:
                     if pattern.search(context):

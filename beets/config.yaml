@@ -43,6 +43,14 @@ plugins:
   - mbsync          # re-sync tags using existing MusicBrainz IDs
   - missing         # report missing tracks in albums
   - duplicates      # find duplicate tracks
+  - parentwork      # classical: fill composer/parent work from MB work relations
+
+parentwork:
+  auto: yes
+  force: no
+
+# FAT (iPod/SD) caps filenames at 255 bytes; classical movement titles get long
+max_filename_length: 180
 
 item_fields:
   # '' for single-disc, unpadded disc number for multi-disc: 101, 201, ...

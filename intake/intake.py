@@ -20,6 +20,7 @@ holds audio (deferred questions, skipped or held-back units).
 """
 
 import argparse
+import json
 import os
 import re
 import shutil
@@ -217,11 +218,16 @@ def parse_intlike(raw: str) -> int:
         return 0
 
 
-def sanitize(name: str) -> str:
+def sanitize(name: str, max_bytes: int = 180) -> str:
     name = unicodedata.normalize("NFC", name)
     name = re.sub(r'[<>:"/\\|?*]', "_", name)
     name = re.sub(r"[\x00-\x1f]", "", name)
-    return name.strip(". ") or "_"
+    name = name.strip(". ") or "_"
+    # FAT (iPod/SD) caps names at 255 bytes; classical movement titles get long.
+    # Clamp at a UTF-8 character boundary, leaving room for 'NNN - ' and '.flac'.
+    while len(name.encode("utf-8")) > max_bytes:
+        name = name[:-1].rstrip(". ") or "_"
+    return name
 
 
 def unique_path(p: Path) -> Path:
@@ -583,7 +589,30 @@ class Pipeline:
         if not targets:
             self.ui.say("  no audio to check")
             return
+        # content already decode-verified clean in an earlier pass never needs
+        # re-decoding: hashing the header/stream is ~100x cheaper than decode
+        cache_path = self.library / ".music-tools" / "clean-cache.json"
+        try:
+            clean_cache = set(json.loads(cache_path.read_text())) if cache_path.exists() else set()
+        except (OSError, ValueError):
+            clean_cache = set()
+        if clean_cache:
+            skipped = 0
+            remaining = []
+            with ThreadPoolExecutor(max_workers=self.jobs) as ex:
+                for p, key in zip(targets, ex.map(track_key, targets)):
+                    if key and key in clean_cache:
+                        skipped += 1
+                    else:
+                        remaining.append(p)
+            if skipped:
+                self.ui.say(f"  {skipped} file(s) previously verified clean — skipped")
+            targets = remaining
+        if not targets:
+            self.ui.say("  nothing new to decode")
+            return
         corrupt: list[tuple[Path, str]] = []
+        newly_clean: list[Path] = []
         checked = 0
         with ThreadPoolExecutor(max_workers=self.jobs) as ex:
             futures = {ex.submit(self._check_one, p): p for p in targets}
@@ -592,7 +621,16 @@ class Pipeline:
                 checked += 1
                 if not ok:
                     corrupt.append((p, err))
+                else:
+                    newly_clean.append(p)
         self.ui.say(f"  checked {checked} file(s): {len(corrupt)} corrupt")
+        if newly_clean and not self.args.dry_run:
+            with ThreadPoolExecutor(max_workers=self.jobs) as ex:
+                clean_cache.update(k for k in ex.map(track_key, newly_clean) if k)
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = cache_path.with_suffix(".tmp")
+            tmp.write_text(json.dumps(sorted(clean_cache)))
+            os.replace(tmp, cache_path)
         for p, err in sorted(corrupt):
             rel = p.relative_to(self.staging)
             # Strippable tag wrappers (leading ID3v2 / trailing ID3v1/APE) are a
@@ -610,8 +648,12 @@ class Pipeline:
                 choice = self.ui.ask(
                     f"CORRUPT: {rel}\n    {first_err}",
                     {"q": f"quarantine to {QUARANTINE}/", "d": "delete",
-                     "i": "ignore (remember: plays fine)"}, "q", context=str(p))
+                     "i": "ignore (remember: plays fine)",
+                     "s": "skip (decide later, stays held)"}, "q", context=str(p))
             except Deferred:
+                self.held.add(p)
+                continue
+            if choice == "s":
                 self.held.add(p)
                 continue
             if choice == "d":
@@ -741,6 +783,15 @@ class Pipeline:
                 self.bump("replayed")
                 if not self.args.dry_run and self._dedupe_against_library(unit, search_id):
                     continue
+            elif akey and self.store.failed_recently(akey):
+                # a quiet match against the same content failed within 72h:
+                # don't burn MusicBrainz queries repeating it
+                self.ui.say(f"  ⏭ recently unmatched, straight to resolution: {rel}")
+                leftovers.append(unit)
+                fz = self.store.fuzzy_album(list(filter(None, unit.keys.values())))
+                if fz:
+                    fuzzy_defaults[akey] = fz[1]
+                continue
             else:
                 self.ui.say(f"  → quiet import: {rel}")
 
@@ -771,6 +822,8 @@ class Pipeline:
                 if fz and akey:
                     fuzzy_defaults[akey] = fz[1]
                 leftovers.append(unit)
+                if akey and not search_id:
+                    self.store.record_failed_attempt(akey)
                 if partial:
                     self.ui.say(f"      partially imported — remaining files "
                                 f"queued for resolution")
@@ -1174,6 +1227,18 @@ class Pipeline:
             suspicion = detect(aa, known, confirmed)
             if not suspicion:
                 continue
+            # Auto-primary policy: apply silently when the suggestion is
+            # corroborated by evidence — the credit's lead is the tracks'
+            # COMPOSER (classical: file under the composer's sort name), or a
+            # split part is an artist already in the library. Uncorroborated
+            # credits (e.g. 'Simon & Garfunkel') still ask, once ever.
+            corroborated = self._corroborated_primary(album, suspicion, known)
+            if corroborated is not None:
+                auto_value, reason = corroborated
+                if self._apply_albumartist(album, auto_value):
+                    self.store.set_canonical_artist(aa, auto_value)
+                    self.ui.say(f"    (auto: {reason})")
+                continue
             # suggestion first (library-spelled), then the other split parts
             options = [suspicion.suggestion] + [
                 p for p in suspicion.parts if p.lower() != suspicion.suggestion.lower()]
@@ -1204,6 +1269,29 @@ class Pipeline:
             # only remember the mapping once it has actually been applied
             if self._apply_albumartist(album, value):
                 self.store.set_canonical_artist(aa, value)
+
+    def _corroborated_primary(self, album: dict, suspicion, known: set[str]) \
+            -> tuple[str, str] | None:
+        """Evidence that makes a primary-artist split safe to auto-apply.
+
+        Classical: the credit's lead segment is the tracks' COMPOSER tag —
+        canonicalize to the composer's sort name ('Bach, Johann Sebastian').
+        Known artist: a split part already exists in the library."""
+        if suspicion.default_keep:
+            return None
+        composers, aa_sort = self.runner.album_composer_info(album["id"])
+        lead = suspicion.parts[0]
+        for comp in composers:
+            if fold(comp) == fold(lead):
+                # first segment of the sort credit = composer sort name
+                sort_lead = re.split(r"\s*;\s*", aa_sort)[0].strip() if aa_sort else ""
+                value = sort_lead or lead
+                return value, f"credit lead '{lead}' is the composer tag"
+        known_folded = {fold(a) for a in known}
+        for part in suspicion.parts:
+            if fold(part) in known_folded:
+                return suspicion.suggestion, f"'{suspicion.suggestion}' already in library"
+        return None
 
     def _apply_albumartist(self, album: dict, value: str) -> bool:
         if self.args.dry_run:

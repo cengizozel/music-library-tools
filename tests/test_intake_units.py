@@ -457,3 +457,29 @@ def test_adopt_lrc_keeps_existing_library_lyrics(tmp_path):
     Pipeline._adopt_lrc(audio, lib_audio)
     assert (lib / "b.lrc").read_text() == "existing"   # never overwritten
     assert (staged / "a.lrc").exists()                 # left for salvage sweep
+
+
+# --------------------------------------------------------------- classical/fat
+
+def test_sanitize_clamps_long_names_at_utf8_boundary():
+    long = "Cantata, BWV 72: I. Coro «Alles nur nach Gottes Willen» " * 8
+    out = sanitize(long)
+    assert len(out.encode("utf-8")) <= 180
+    out.encode("utf-8")  # must not raise (no split surrogates)
+    assert sanitize("short") == "short"  # untouched
+
+
+def test_detect_classical_credit_leads_with_composer():
+    s = detect("Johann Sebastian Bach; Bach Collegium Japan, Masaaki Suzuki", set())
+    assert s is not None
+    assert s.separator == "semicolon"
+    assert s.parts[0] == "Johann Sebastian Bach"
+    assert not s.default_keep  # semicolon splits are actionable
+
+
+def test_failed_attempt_memory(tmp_path):
+    s = DecisionStore(tmp_path / "d.json")
+    assert not s.failed_recently("album:x")
+    s.record_failed_attempt("album:x")
+    assert s.failed_recently("album:x")
+    assert not s.failed_recently("album:x", hours=0)
