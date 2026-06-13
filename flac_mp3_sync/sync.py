@@ -106,7 +106,9 @@ def _cover_to_device_jpeg(src: Path, dst: Path) -> bool:
         ["ffmpeg", "-v", "error", "-y", "-i", str(src),
          "-vf", f"scale='min({DEVICE_COVER_MAX},iw)':'min({DEVICE_COVER_MAX},ih)'"
                 ":force_original_aspect_ratio=decrease",
-         "-q:v", "3", str(tmp)],
+         # 4:2:0 subsampling: Rockbox's JPEG decoder garbles 4:4:4 / 4:2:2,
+         # so force the universally-safe chroma layout for the device copy
+         "-pix_fmt", "yuvj420p", "-q:v", "3", str(tmp)],
         capture_output=True)
     if r.returncode == 0 and tmp.exists() and tmp.stat().st_size > 0:
         os.replace(tmp, dst)
