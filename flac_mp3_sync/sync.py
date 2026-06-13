@@ -89,27 +89,46 @@ def copy_file(src: Path, dst: Path) -> tuple[Path, bool, str]:
         return src, False, str(e)
 
 
-# Rockbox/PictureFlow on old players can't decode large or progressive images
-# (big PNGs in particular). Cover art copied to the mirror is therefore capped
-# to a device-safe baseline JPEG. Audio is untouched; the FLAC library keeps the
-# full-resolution original — only the derived mirror copy is downscaled.
+# Device cover art is a baseline JPEG re-encoded so Rockbox's embedded decoder
+# renders it in COLOR. The catch: Rockbox dequantizes chroma with a hard-coded
+# "table 1" lookup, but ffmpeg's mjpeg encoder writes only ONE quantization
+# table — so chroma collapses and covers render grayscale on the device while
+# looking fine on a PC. cjpeg with `-qslots 0,1,1` writes both tables (luma=0,
+# chroma=1), matching the structure Rockbox expects. Pipeline: ffmpeg decodes/
+# scales to PPM, cjpeg encodes. Audio and the FLAC library are untouched.
 DEVICE_COVER_MAX = 500
+DEVICE_COVER_EXT = ".jpg"
 
 
-def _cover_to_device_jpeg(src: Path, dst: Path) -> bool:
-    """Write a <=DEVICE_COVER_MAX px baseline JPEG of src at dst (named .jpg).
-    True on success. Requires ffmpeg."""
-    dst = dst.with_suffix(".jpg")
+def _cover_to_device_image(src: Path, dst: Path) -> bool:
+    """Write a <=DEVICE_COVER_MAX px baseline JPEG with both quantization tables
+    (Rockbox-color-safe) of src at dst. True on success. Needs ffmpeg + cjpeg;
+    falls back to a plain ffmpeg JPEG (may render grayscale on Rockbox) if cjpeg
+    is absent."""
+    dst = dst.with_suffix(DEVICE_COVER_EXT)
     dst.parent.mkdir(parents=True, exist_ok=True)
+    scale = (f"scale='min({DEVICE_COVER_MAX},iw)':'min({DEVICE_COVER_MAX},ih)'"
+             ":force_original_aspect_ratio=decrease")
+    if shutil.which("cjpeg"):
+        dec = subprocess.run(
+            ["ffmpeg", "-v", "error", "-y", "-i", str(src), "-vf", scale,
+             "-pix_fmt", "rgb24", "-f", "image2pipe", "-vcodec", "ppm", "-"],
+            capture_output=True)
+        if dec.returncode != 0 or not dec.stdout:
+            return False
+        enc = subprocess.run(
+            ["cjpeg", "-quality", "90", "-baseline",
+             "-sample", "2x2,1x1,1x1", "-qslots", "0,1,1"],
+            input=dec.stdout, capture_output=True)
+        if enc.returncode == 0 and enc.stdout:
+            dst.write_bytes(enc.stdout)
+            return True
+        return False
+    # fallback: plain ffmpeg JPEG (1 quant table -> may be grayscale on Rockbox)
     tmp = dst.with_name("_cov_tmp.jpg")
     r = subprocess.run(
-        ["ffmpeg", "-v", "error", "-y", "-i", str(src),
-         "-vf", f"scale='min({DEVICE_COVER_MAX},iw)':'min({DEVICE_COVER_MAX},ih)'"
-                ":force_original_aspect_ratio=decrease",
-         # 4:2:0 subsampling: Rockbox's JPEG decoder garbles 4:4:4 / 4:2:2,
-         # so force the universally-safe chroma layout for the device copy
-         "-pix_fmt", "yuvj420p", "-q:v", "3", str(tmp)],
-        capture_output=True)
+        ["ffmpeg", "-v", "error", "-y", "-i", str(src), "-vf", scale,
+         "-pix_fmt", "yuvj420p", "-q:v", "3", str(tmp)], capture_output=True)
     if r.returncode == 0 and tmp.exists() and tmp.stat().st_size > 0:
         os.replace(tmp, dst)
         return True
@@ -128,16 +147,16 @@ def sync_images(source_root: Path, target_root: Path, excludes: list[str]):
             src = Path(root) / fname
             dst = target_root / src.relative_to(source_root)
             dst.parent.mkdir(parents=True, exist_ok=True)
-            # cover art -> device-safe capped baseline JPEG
+            # cover art -> device-safe uncompressed BMP (PictureFlow-readable color)
             is_cover = have_ffmpeg and ext in IMAGE_EXTENSIONS and \
                 src.stem.lower() in ("cover", "folder", "front")
             if is_cover:
-                jpg_dst = dst.with_suffix(".jpg")
-                if needs_update(src, jpg_dst):
-                    if _cover_to_device_jpeg(src, dst):
-                        # a source cover.png becomes cover.jpg on the device;
-                        # drop a stale same-name .png so it isn't an orphan
-                        if ext == ".png":
+                bmp_dst = dst.with_suffix(DEVICE_COVER_EXT)
+                if needs_update(src, bmp_dst):
+                    if _cover_to_device_image(src, dst):
+                        # the source cover (any format) becomes cover.bmp on the
+                        # device; drop a stale same-name original so it's no orphan
+                        if dst.suffix.lower() != DEVICE_COVER_EXT:
                             dst.unlink(missing_ok=True)
                         continue
                 else:
@@ -167,9 +186,9 @@ def remove_orphans(source_root: Path, target_root: Path, excludes: list[str]) ->
             elif ext in IMAGE_EXTENSIONS | LYRIC_EXTENSIONS:
                 if (source_root / relative).exists():
                     continue
-                # a device cover.jpg may derive from a library cover in any
-                # image format (cover.png -> cover.jpg); not an orphan then
-                if tgt.stem.lower() in ("cover", "folder", "front") and ext == ".jpg":
+                # a device cover.bmp derives from a library cover in any image
+                # format (cover.png/jpg -> cover.bmp); not an orphan then
+                if tgt.stem.lower() in ("cover", "folder", "front") and ext == DEVICE_COVER_EXT:
                     src_dir = source_root / relative.parent
                     if src_dir.is_dir() and any(
                             p.stem.lower() == tgt.stem.lower()

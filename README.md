@@ -19,8 +19,8 @@ curl -sL https://github.com/acoustid/chromaprint/releases/download/v1.5.1/chroma
   | tar xz --strip-components=1 -C venv/bin chromaprint-fpcalc-1.5.1-linux-x86_64/fpcalc
 
 # system tools:
-sudo pacman -S flac ffmpeg        # Arch
-# brew install flac ffmpeg        # macOS
+sudo pacman -S flac ffmpeg libjpeg-turbo   # Arch (libjpeg-turbo = cjpeg, for device-color covers)
+# brew install flac ffmpeg jpeg-turbo          # macOS
 
 cp intake/config.example.toml intake.toml   # then edit paths
 ```
