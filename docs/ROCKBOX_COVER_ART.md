@@ -70,6 +70,25 @@ rm -rf <iPod>/.rockbox/rocks/demos/pictureflow/
 Then on the device: PictureFlow → menu → Settings → **Rebuild cache** (NOT
 "Update cache" — Update only adds new albums and keeps stale tiles).
 
+## Known Rockbox bug: PictureFlow shows too few albums for the first artist
+
+Unrelated to cover art, but found while debugging on the same device: on Rockbox
+4.0, PictureFlow displays only ONE album for the *first* artist (the one that
+sorts first), even though the Database browse menu and PictureFlow's own
+`pictureflow_album.idx` contain all of that artist's albums. An album-artist
+whose name begins with `$` (e.g. `$uicideboy$`) is a prime trigger because `$`
+sorts before every letter, making it the first artist.
+
+It is NOT a tagging problem and rebuilding the cache does not fix it (the index
+build logic itself is buggy). Fixed post-4.0 by FS#13350 ("PictureFlow: Fix too
+few albums displayed for first artist"), 2025-10-26:
+
+  https://git.rockbox.org/cgit/rockbox.git/commit/?id=994acefa23
+
+Fix: update Rockbox to a build newer than 2025-10-26 (any daily, or release 4.1+),
+then Database → Initialize Now and PictureFlow → Rebuild cache. Workaround on
+4.0: browse that artist via the Database menu instead of PictureFlow.
+
 ## Device transfer notes
 
 - iPods are FAT32: rsync with `-rt --modify-window=2` (FAT has 2s mtime
