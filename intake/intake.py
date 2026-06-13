@@ -631,8 +631,11 @@ class Pipeline:
             tmp = cache_path.with_suffix(".tmp")
             tmp.write_text(json.dumps(sorted(clean_cache)))
             os.replace(tmp, cache_path)
+        quarantined_roots: set[Path] = set()
         for p, err in sorted(corrupt):
             rel = p.relative_to(self.staging)
+            if any(root in p.parents for root in quarantined_roots):
+                continue  # whole album already quarantined this run
             # Strippable tag wrappers (leading ID3v2 / trailing ID3v1/APE) are a
             # common cause of FLAC "corruption" — repair silently before asking.
             if p.suffix.lower() == ".flac" and not self.args.dry_run and repair_flac(p):
@@ -644,12 +647,15 @@ class Pipeline:
                 self.ui.say(f"  (previously ignored) {rel}")
                 continue
             first_err = err.splitlines()[0] if err else "decode error"
+            # Policy: an album containing corruption never imports as-is. The
+            # decision is album-level; only an explicit "ignore" lets it through.
             try:
                 choice = self.ui.ask(
                     f"CORRUPT: {rel}\n    {first_err}",
-                    {"q": f"quarantine to {QUARANTINE}/", "d": "delete",
+                    {"q": f"quarantine WHOLE album to {QUARANTINE}/",
+                     "d": "delete file (album imports without it)",
                      "i": "ignore (remember: plays fine)",
-                     "s": "skip (decide later, stays held)"}, "q", context=str(p))
+                     "s": "skip (album stays held in staging)"}, "q", context=str(p))
             except Deferred:
                 self.held.add(p)
                 continue
@@ -659,19 +665,25 @@ class Pipeline:
             if choice == "d":
                 self.delete(p, "corrupt")
             elif choice == "q":
-                qdir = self.staging / QUARANTINE / rel.parent
+                root = self._unit_root(p)
+                root_rel = root.relative_to(self.staging)
                 if not self.args.dry_run:
-                    qdir.mkdir(parents=True, exist_ok=True)
-                    qdst = qdir / p.name
-                    n = 1
-                    while qdst.exists():  # never overwrite an earlier quarantine
-                        qdst = qdir / f"{p.stem} ({n}){p.suffix}"
-                        n += 1
-                    shutil.move(str(p), qdst)
-                self.ui.say(f"  quarantined: {rel}")
-                self.bump("quarantined")
+                    qdst = unique_path(self.staging / QUARANTINE / root_rel)
+                    qdst.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.move(str(root), qdst)
+                quarantined_roots.add(root)
+                self.ui.say(f"  quarantined whole album: {root_rel}")
+                self.bump("quarantined_albums")
             elif choice == "i" and key:
                 self.store.set_track(key, corrupt="ignore")
+
+    def _unit_root(self, p: Path) -> Path:
+        """The album dir a staged file belongs to (disc subfolders fold into
+        their parent, same as unit discovery)."""
+        d = p.parent
+        if d != self.staging and DISC_DIR_RE.match(d.name) and d.parent != self.staging:
+            d = d.parent
+        return d if d != self.staging else p.parent
 
     @staticmethod
     def _check_one(p: Path) -> tuple[Path, bool, str]:

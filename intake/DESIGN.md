@@ -29,8 +29,10 @@ Phases, in order:
    - zero-byte / unreadable -> QUESTION: delete / skip
    All answers remembered by content key where possible.
 3. **Corruption check** - `flac --test` for FLAC, `ffmpeg -v error` decode for everything else,
-   thread pool. Corrupt -> QUESTION: delete / quarantine to `_Staging/_Corrupt/` / ignore(+remember).
-   Known-corrupt keys from store auto-flag without re-decode.
+   thread pool. An album containing ANY corrupt track never imports as-is: the default answer
+   quarantines the WHOLE album to `_Staging/_Corrupt/`; alternatives are delete-the-file (album
+   then imports without it), explicit ignore (remembered: plays fine), or skip (album stays held).
+   Files decode-verified clean are cached by content key and never re-decoded.
 4. **Group into album units** - a unit is a dir directly containing audio; bare `CD*/Disc*/12 Vinyl*`
    subfolders merge into their parent (one unit). NAMED disc folders (`CD2 - Relapse Refill`) are
    their own unit (usually their own MusicBrainz release) and get physically relocated to the
