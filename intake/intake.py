@@ -1288,17 +1288,29 @@ class Pipeline:
 
         Classical: the credit's lead segment is the tracks' COMPOSER tag —
         canonicalize to the composer's sort name ('Bach, Johann Sebastian').
-        Known artist: a split part already exists in the library."""
-        if suspicion.default_keep:
-            return None
+        This applies even to comma credits ('Johann Sebastian Bach, Glenn
+        Gould'): the composer tag is precisely the evidence that makes a comma
+        split safe. Known artist: a split part already exists in the library
+        (NOT applied to comma credits — names like 'Tyler, the Creator')."""
         composers, aa_sort = self.runner.album_composer_info(album["id"])
         lead = suspicion.parts[0]
         for comp in composers:
             if fold(comp) == fold(lead):
-                # first segment of the sort credit = composer sort name
-                sort_lead = re.split(r"\s*;\s*", aa_sort)[0].strip() if aa_sort else ""
-                value = sort_lead or lead
+                value = lead
+                if aa_sort:
+                    if ";" in aa_sort:
+                        cand = re.split(r"\s*;\s*", aa_sort)[0].strip()
+                    else:
+                        # comma-joined sort credit: 'Bach, Johann Sebastian,
+                        # Gould, Glenn' — sort names are 'Surname, Given' pairs
+                        cand = ", ".join(s.strip() for s in aa_sort.split(",")[:2])
+                    # accept only if it is a word-permutation of the composer
+                    if sorted(fold(cand).replace(",", " ").split()) == \
+                       sorted(fold(lead).split()):
+                        value = cand
                 return value, f"credit lead '{lead}' is the composer tag"
+        if suspicion.default_keep:
+            return None
         known_folded = {fold(a) for a in known}
         for part in suspicion.parts:
             if fold(part) in known_folded:
