@@ -89,16 +89,59 @@ def copy_file(src: Path, dst: Path) -> tuple[Path, bool, str]:
         return src, False, str(e)
 
 
+# Rockbox/PictureFlow on old players can't decode large or progressive images
+# (big PNGs in particular). Cover art copied to the mirror is therefore capped
+# to a device-safe baseline JPEG. Audio is untouched; the FLAC library keeps the
+# full-resolution original — only the derived mirror copy is downscaled.
+DEVICE_COVER_MAX = 500
+
+
+def _cover_to_device_jpeg(src: Path, dst: Path) -> bool:
+    """Write a <=DEVICE_COVER_MAX px baseline JPEG of src at dst (named .jpg).
+    True on success. Requires ffmpeg."""
+    dst = dst.with_suffix(".jpg")
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    tmp = dst.with_name("_cov_tmp.jpg")
+    r = subprocess.run(
+        ["ffmpeg", "-v", "error", "-y", "-i", str(src),
+         "-vf", f"scale='min({DEVICE_COVER_MAX},iw)':'min({DEVICE_COVER_MAX},ih)'"
+                ":force_original_aspect_ratio=decrease",
+         "-q:v", "3", str(tmp)],
+        capture_output=True)
+    if r.returncode == 0 and tmp.exists() and tmp.stat().st_size > 0:
+        os.replace(tmp, dst)
+        return True
+    tmp.unlink(missing_ok=True)
+    return False
+
+
 def sync_images(source_root: Path, target_root: Path, excludes: list[str]):
+    have_ffmpeg = shutil.which("ffmpeg") is not None
     for root, dirs, files in os.walk(source_root):
         dirs[:] = [d for d in dirs if d not in excludes]
         for fname in files:
-            if Path(fname).suffix.lower() in IMAGE_EXTENSIONS | LYRIC_EXTENSIONS:
-                src = Path(root) / fname
-                dst = target_root / src.relative_to(source_root)
-                dst.parent.mkdir(parents=True, exist_ok=True)
-                if needs_update(src, dst):
-                    shutil.copy2(src, dst)
+            ext = Path(fname).suffix.lower()
+            if ext not in IMAGE_EXTENSIONS | LYRIC_EXTENSIONS:
+                continue
+            src = Path(root) / fname
+            dst = target_root / src.relative_to(source_root)
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            # cover art -> device-safe capped baseline JPEG
+            is_cover = have_ffmpeg and ext in IMAGE_EXTENSIONS and \
+                src.stem.lower() in ("cover", "folder", "front")
+            if is_cover:
+                jpg_dst = dst.with_suffix(".jpg")
+                if needs_update(src, jpg_dst):
+                    if _cover_to_device_jpeg(src, dst):
+                        # a source cover.png becomes cover.jpg on the device;
+                        # drop a stale same-name .png so it isn't an orphan
+                        if ext == ".png":
+                            dst.unlink(missing_ok=True)
+                        continue
+                else:
+                    continue
+            if needs_update(src, dst):
+                shutil.copy2(src, dst)
 
 
 def remove_orphans(source_root: Path, target_root: Path, excludes: list[str]) -> list[Path]:
@@ -120,9 +163,19 @@ def remove_orphans(source_root: Path, target_root: Path, excludes: list[str]) ->
                     tgt.unlink()
                     removed.append(tgt)
             elif ext in IMAGE_EXTENSIONS | LYRIC_EXTENSIONS:
-                if not (source_root / relative).exists():
-                    tgt.unlink()
-                    removed.append(tgt)
+                if (source_root / relative).exists():
+                    continue
+                # a device cover.jpg may derive from a library cover in any
+                # image format (cover.png -> cover.jpg); not an orphan then
+                if tgt.stem.lower() in ("cover", "folder", "front") and ext == ".jpg":
+                    src_dir = source_root / relative.parent
+                    if src_dir.is_dir() and any(
+                            p.stem.lower() == tgt.stem.lower()
+                            and p.suffix.lower() in IMAGE_EXTENSIONS
+                            for p in src_dir.iterdir()):
+                        continue
+                tgt.unlink()
+                removed.append(tgt)
         mp3_dir = Path(root)
         if mp3_dir != target_root and not any(mp3_dir.iterdir()):
             mp3_dir.rmdir()
