@@ -544,3 +544,12 @@ def test_cover_junk_name_detection():
     assert cov.is_junk("Thumbs.db")
     assert not cov.is_junk("cover.jpg")
     assert not cov.is_junk("booklet-03.jpg")
+
+
+def test_extract_embedded_cover_skips_when_external_exists(tmp_path):
+    from intake import extract_embedded_cover
+    d = tmp_path / "Album"; d.mkdir()
+    (d / "01.flac").write_bytes(b"fLaC")
+    (d / "cover.jpg").write_bytes(b"existing")
+    # external cover already present -> no extraction attempted
+    assert extract_embedded_cover(d) is False

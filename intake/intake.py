@@ -245,6 +245,33 @@ def _is_thumbnail_junk(name: str) -> bool:
     return bool(_THUMBNAIL_JUNK_RE.match(name))
 
 
+def extract_embedded_cover(album_dir: Path) -> bool:
+    """If the album has no external cover file but its tracks carry embedded
+    art, write that art to cover.jpg. PictureFlow / Rockbox cannot read embedded
+    art, and beets' fetchart only pulls from external sources + the filesystem,
+    so embedded-only albums would otherwise land coverless. True if extracted."""
+    if any(p.is_file() and p.suffix.lower() in IMAGES
+           and p.stem.lower() in ("cover", "folder", "front")
+           for p in album_dir.iterdir()):
+        return False
+    track = next((f for f in sorted(album_dir.rglob("*"))
+                  if f.suffix.lower() in ALL_AUDIO), None)
+    if track is None:
+        return False
+    has_art = subprocess.run(
+        ["ffprobe", "-v", "error", "-select_streams", "v",
+         "-show_entries", "stream=codec_name", "-of", "csv=p=0", str(track)],
+        capture_output=True, text=True).stdout.strip()
+    if not has_art:
+        return False
+    out = album_dir / "cover.jpg"
+    r = subprocess.run(
+        ["ffmpeg", "-v", "error", "-y", "-i", str(track), "-an",
+         "-frames:v", "1", "-update", "1", str(out)],
+        capture_output=True)
+    return r.returncode == 0 and out.exists() and out.stat().st_size > 0
+
+
 def unique_path(p: Path) -> Path:
     """p itself if free, else 'stem (N).suffix' — never overwrite anything."""
     if not p.exists():
@@ -1408,9 +1435,12 @@ class Pipeline:
             for f in apath.rglob("*"):
                 if f.suffix.lower() == ".flac" and sniff(f) not in ("flac",):
                     bad.append(f)
-            # device-ready cover art: dedupe + drop WMP junk + .jpeg->.jpg +
-            # progressive->baseline (lossless), so Rockbox/PictureFlow can read it
+            # device-ready cover art: rescue embedded-only art to a cover file,
+            # then dedupe + drop WMP junk + .jpeg->.jpg + progressive->baseline
+            # (lossless) so Rockbox/PictureFlow can read it
             if not self.args.dry_run:
+                if extract_embedded_cover(apath):
+                    cover_fixes += 1
                 cover_fixes += normalize_album_covers(apath)
         if bad:
             for f in bad:
