@@ -58,8 +58,8 @@ Reuse existing modules: `BeetsRunner`, `DecisionStore`, `audio_keys.track_key`,
    (recompute keys from the newly-imported files, store `action=mbid` with the
    correct mbid). This is the canonical path so it stays consistent with intake.
 8. **Re-attach companions + device-prep cover** — call `_attach_lrc`,
-   `extract_embedded_cover`, `normalize_album_covers` on the new album dir, same
-   as intake's post phase.
+   `apply_cover_policy` (pass the corrected `mbid`), `normalize_album_covers` on
+   the new album dir, same as intake's post phase.
 9. **Cleanup** — remove the emptied temp staging dir; print a before/after
    summary (old album/path → new album/path, mbid change).
 

@@ -10,19 +10,55 @@ same sane library. An MP3 mirror is derived from it for devices.
 
 ## One-time setup
 
+First-timer? This is a Python project plus a few command-line media tools. Do
+these four steps once on any machine (laptop or headless server) — see
+[Running on a server](#running-on-a-server-headless) for server specifics.
+
+**1. Clone and create the Python environment**
+
 ```bash
+git clone https://github.com/cengizozel/music-library-tools
+cd music-library-tools
 python3 -m venv venv
 venv/bin/pip install -r requirements.txt
+```
 
-# acoustic fingerprinting (no root needed - static binary into the venv):
+**2. Install the system tools** (the pipeline shells out to these)
+
+| Tool | Used for | If missing |
+|---|---|---|
+| `flac` | corruption test, encode | covers/validation skipped |
+| `ffmpeg` | decode, MP3 convert, cover transcode | required |
+| `cjpeg`, `jpegtran` | device-color-safe covers (Rockbox) | covers won't be device-optimized |
+| `fpcalc` | acoustic fingerprinting (better matches) | matching still works, less robust |
+
+```bash
+# Ubuntu / Debian (e.g. the server):
+sudo apt install -y flac ffmpeg libjpeg-turbo-progs libchromaprint-tools
+# Arch:
+sudo pacman -S flac ffmpeg libjpeg-turbo chromaprint
+# macOS:
+brew install flac ffmpeg jpeg-turbo chromaprint
+```
+
+If your distro has no `fpcalc` package, drop the static binary into the venv (no
+root needed):
+
+```bash
 curl -sL https://github.com/acoustid/chromaprint/releases/download/v1.5.1/chromaprint-fpcalc-1.5.1-linux-x86_64.tar.gz \
   | tar xz --strip-components=1 -C venv/bin chromaprint-fpcalc-1.5.1-linux-x86_64/fpcalc
+```
 
-# system tools:
-sudo pacman -S flac ffmpeg libjpeg-turbo   # Arch (libjpeg-turbo = cjpeg, for device-color covers)
-# brew install flac ffmpeg jpeg-turbo          # macOS
+**3. Point it at your library** — copy the config and edit the paths:
 
-cp intake/config.example.toml intake.toml   # then edit paths
+```bash
+cp intake/config.example.toml intake.toml   # then edit `library` and `mp3_target`
+```
+
+**4. Sanity check**
+
+```bash
+venv/bin/python intake/intake.py --dry-run   # shows what it would do, changes nothing
 ```
 
 ## The workflow: one command
@@ -56,7 +92,29 @@ Phases, automatic unless a decision is genuinely yours to make:
 7. **Normalize albumartists** - collab tags like `Bones & cat soup` fragment the
    artist list on Rockbox/Neutron. You pick the canonical primary artist once;
    the folder + albumartist follow it, per-track artist keeps the full credit.
-8. **Post-check & sync** - imported files re-verified; optional MP3 mirror sync.
+8. **Post-check & sync** - imported files re-verified; cover art settled by the
+   source policy below; optional MP3 mirror sync.
+
+### Cover-art source policy
+
+Devices (Rockbox/PictureFlow, Neutron) read an external `cover.jpg`, never the
+art embedded in the audio - so intake makes `cover.jpg` match what the files
+actually carry, per album, in priority order:
+
+1. **Embedded art wins** - if the tracks carry cover art, it becomes `cover.jpg`
+   (already-JPEG art is copied byte-for-byte, lossless; PNG is transcoded once).
+   This overrides a wrong cover that fetchart may have downloaded.
+2. **Cover Art Archive** - if no track has embedded art, the front cover is
+   fetched from the [CAA](https://coverartarchive.org) by the album's MusicBrainz
+   release ID, set as `cover.jpg`, *and embedded back into every track* so the
+   files become self-describing.
+3. **Keep current** - if neither applies (e.g. a gamerip with no MBID), whatever
+   cover is already there is left in place.
+
+Audio samples are never modified (art lives in tags), so content keys and the
+remembered decisions stay valid. The chosen `cover.jpg` is then deduped /
+de-junked / baselined, and the mirror step re-encodes it to a device-color-safe
+JPEG (see `docs/ROCKBOX_COVER_ART.md`).
 
 ### Pushing the mirror to devices
 
@@ -82,6 +140,40 @@ or renaming - and it re-files itself with zero questions. The file lives inside
 the library so backups carry it. Album lookups also match fuzzily (≥80% of the
 same tracks), so an album that gained a bonus track suggests its old decision
 as the default.
+
+## Running on a server (headless)
+
+Nothing here is tied to a particular machine — the pipeline is entirely
+path-driven by `intake.toml`, and the decision memory is **portable** (it keys
+on audio content, not paths), so the same `decisions.json` replays correctly on
+any host. To run the library from a server (e.g. next to Plex):
+
+1. Do the [one-time setup](#one-time-setup) on the server (clone, venv, the
+   `apt` line, `intake.toml`).
+2. Make `intake.toml` point at the server's library + mirror. For example, when
+   Plex serves FLAC from `Music/Official` and you keep the MP3 mirror beside it:
+
+   ```toml
+   library    = "/media/devmon/Expansion/Music/Official"
+   mp3_target = "/media/devmon/Expansion/Music/Official_mp3"
+   bitrate    = "320k"
+   jobs       = 8
+   ```
+
+   The decision memory lives at `<library>/.music-tools/decisions.json`, i.e.
+   `…/Music/Official/.music-tools/decisions.json` — drop your existing
+   `decisions.json` there and prior answers carry over with zero re-prompting.
+3. Stage new music into `<library>/_Staging/` and run intake. Because there's no
+   TTY for interactive prompts in a cron/ssh context, use `--auto` (it defers
+   anything that needs a human and files only confident matches):
+
+   ```bash
+   venv/bin/python intake/intake.py --auto --sync
+   ```
+
+> Note: `beets.db` (`.music-tools/beets.db`) stores **absolute** paths, so a copy
+> from another machine is stale — delete it and it rebuilds on the next run.
+> `decisions.json` has no such problem and should be carried over.
 
 ## Library layout
 

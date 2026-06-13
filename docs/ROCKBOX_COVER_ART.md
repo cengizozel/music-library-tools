@@ -10,8 +10,11 @@ rule below applies only to the derived **device mirror** (`flac_mp3_sync`).
 ## The requirements (all enforced by sync.py `_cover_to_device_image`)
 
 1. **External `cover.jpg` per album folder** — PictureFlow does NOT read embedded
-   art. (Intake's `extract_embedded_cover` writes one when an album has only
-   embedded art.)
+   art. Intake's cover-source policy (`apply_cover_policy`) guarantees one:
+   embedded art wins and is written to `cover.jpg`; failing that the front cover
+   is fetched from the Cover Art Archive by MBID and embedded back into the
+   tracks; failing that the existing cover is kept. See the README "Cover-art
+   source policy" section.
 2. **Baseline, not progressive** — Rockbox can't decode progressive JPEGs (shows
    "bad art"). jpegtran/cjpeg produce baseline.
 3. **JPEG or BMP, not PNG** — PictureFlow's art lookup is JPEG/BMP only; large

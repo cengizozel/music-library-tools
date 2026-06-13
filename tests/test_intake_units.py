@@ -546,10 +546,45 @@ def test_cover_junk_name_detection():
     assert not cov.is_junk("booklet-03.jpg")
 
 
-def test_extract_embedded_cover_skips_when_external_exists(tmp_path):
-    from intake import extract_embedded_cover
+# tiny valid JPEG (1x1) so mutagen accepts the FLAC picture block
+_JPEG_1x1 = bytes.fromhex(
+    "ffd8ffe000104a46494600010100000100010000ffdb004300080606070605080707"
+    "07090908"
+    + "0a" * 100) + b"\xff\xd9"
+
+
+def test_write_cover_jpg_copies_jpeg_verbatim(tmp_path):
+    from intake import _write_cover_jpg
+    dst = tmp_path / "cover.jpg"
+    assert _write_cover_jpg(_JPEG_1x1, "image/jpeg", dst) is True
+    # already-JPEG bytes are stored byte-for-byte (lossless), not re-encoded
+    assert dst.read_bytes() == _JPEG_1x1
+
+
+def test_apply_cover_policy_keeps_when_no_art_and_no_mbid(tmp_path):
+    from intake import apply_cover_policy
     d = tmp_path / "Album"; d.mkdir()
-    (d / "01.flac").write_bytes(b"fLaC")
+    (d / "01.flac").write_bytes(b"fLaC")          # not real audio -> no embedded art
     (d / "cover.jpg").write_bytes(b"existing")
-    # external cover already present -> no extraction attempted
-    assert extract_embedded_cover(d) is False
+    # no embedded art, no MBID, fetch disabled -> step 3: leave the cover as-is
+    assert apply_cover_policy(d, mbid=None, fetch=False) == "kept"
+    assert (d / "cover.jpg").read_bytes() == b"existing"
+
+
+@pytest.mark.skipif(not FLAC_BIN, reason="flac CLI not installed")
+def test_apply_cover_policy_embedded_wins_over_existing_cover(tmp_path):
+    from intake import apply_cover_policy
+    from mutagen.flac import FLAC, Picture
+    d = tmp_path / "Album"; d.mkdir()
+    (d / "01.flac").write_bytes(_make_real_flac(tmp_path))
+    # embed art into the track
+    a = FLAC(d / "01.flac")
+    pic = Picture(); pic.type = 3; pic.mime = "image/jpeg"; pic.data = _JPEG_1x1
+    a.add_picture(pic); a.save()
+    # a different (wrong) external cover is already present
+    (d / "cover.jpg").write_bytes(b"wrong-downloaded-cover")
+    (d / "folder.jpg").write_bytes(b"wrong-downloaded-cover")
+    assert apply_cover_policy(d, mbid=None, fetch=False) == "embedded"
+    # embedded art overrides the wrong cover, and the shadowing folder.jpg is gone
+    assert (d / "cover.jpg").read_bytes() == _JPEG_1x1
+    assert not (d / "folder.jpg").exists()

@@ -59,6 +59,7 @@ ALL_AUDIO = CORE_AUDIO | OTHER_AUDIO
 COMPANION = {".lrc"}
 IMAGES = {".jpg", ".jpeg", ".png", ".bmp", ".gif", ".webp", ".tif", ".tiff"}
 KEEP_NAMES = {".keep"}
+COVER_UA = "music-library-tools/1.0 (https://github.com/; cover-policy)"
 # Useful for identifying a release that fails to match (booklets, cue sheets).
 # They stay with the unit through import and are cleaned up only after the
 # album lands in the library; unresolved albums keep them in staging.
@@ -245,31 +246,160 @@ def _is_thumbnail_junk(name: str) -> bool:
     return bool(_THUMBNAIL_JUNK_RE.match(name))
 
 
-def extract_embedded_cover(album_dir: Path) -> bool:
-    """If the album has no external cover file but its tracks carry embedded
-    art, write that art to cover.jpg. PictureFlow / Rockbox cannot read embedded
-    art, and beets' fetchart only pulls from external sources + the filesystem,
-    so embedded-only albums would otherwise land coverless. True if extracted."""
-    if any(p.is_file() and p.suffix.lower() in IMAGES
-           and p.stem.lower() in ("cover", "folder", "front")
-           for p in album_dir.iterdir()):
-        return False
-    track = next((f for f in sorted(album_dir.rglob("*"))
-                  if f.suffix.lower() in ALL_AUDIO), None)
-    if track is None:
-        return False
-    has_art = subprocess.run(
-        ["ffprobe", "-v", "error", "-select_streams", "v",
-         "-show_entries", "stream=codec_name", "-of", "csv=p=0", str(track)],
-        capture_output=True, text=True).stdout.strip()
-    if not has_art:
-        return False
-    out = album_dir / "cover.jpg"
+def _first_audio(album_dir: Path) -> Path | None:
+    return next((f for f in sorted(album_dir.rglob("*"))
+                 if f.is_file() and f.suffix.lower() in ALL_AUDIO), None)
+
+
+def _embedded_art(track: Path):
+    """(bytes, mime) of a track's front-cover art, or None. Reads FLAC/MP3/M4A."""
+    try:
+        import mutagen
+        from mutagen.mp4 import MP4Cover
+        audio = mutagen.File(track)
+    except Exception:
+        return None
+    if audio is None:
+        return None
+    pics = getattr(audio, "pictures", None)                 # FLAC
+    if pics:
+        p = next((x for x in pics if getattr(x, "type", 3) == 3), pics[0])
+        return p.data, (p.mime or "image/jpeg")
+    tags = getattr(audio, "tags", None)
+    if tags is not None:
+        try:                                                # MP3 (ID3 APIC)
+            apics = tags.getall("APIC")
+            if apics:
+                p = next((x for x in apics if x.type == 3), apics[0])
+                return p.data, (p.mime or "image/jpeg")
+        except Exception:
+            pass
+        if "covr" in tags:                                  # M4A / ALAC
+            c = tags["covr"][0]
+            mime = "image/png" if c.imageformat == MP4Cover.FORMAT_PNG else "image/jpeg"
+            return bytes(c), mime
+    return None
+
+
+def _write_cover_jpg(data: bytes, mime: str, dst: Path) -> bool:
+    """Write image bytes to dst as cover.jpg. Already-JPEG bytes are copied
+    verbatim (lossless); PNG/WebP/etc. are transcoded once via ffmpeg."""
+    if data[:3] == b"\xff\xd8\xff" or "jpeg" in mime or "jpg" in mime:
+        dst.write_bytes(data)
+        return dst.exists() and dst.stat().st_size > 0
+    tmp_in = dst.with_name("_emb_src")
+    tmp_out = dst.with_name("_emb_out.jpg")
+    tmp_in.write_bytes(data)
     r = subprocess.run(
-        ["ffmpeg", "-v", "error", "-y", "-i", str(track), "-an",
-         "-frames:v", "1", "-update", "1", str(out)],
+        ["ffmpeg", "-v", "error", "-y", "-i", str(tmp_in), "-an",
+         "-frames:v", "1", "-update", "1", "-q:v", "2", str(tmp_out)],
         capture_output=True)
-    return r.returncode == 0 and out.exists() and out.stat().st_size > 0
+    tmp_in.unlink(missing_ok=True)
+    ok = r.returncode == 0 and tmp_out.exists() and tmp_out.stat().st_size > 0
+    if ok:
+        os.replace(tmp_out, dst)
+    else:
+        tmp_out.unlink(missing_ok=True)
+    return ok
+
+
+def _embed_art_into_tracks(album_dir: Path, data: bytes, mime: str) -> int:
+    """Embed front-cover art into every audio track; return how many were set.
+    Audio samples are untouched, so content keys / decisions stay valid."""
+    from mutagen.flac import FLAC, Picture
+    from mutagen.id3 import ID3, APIC, ID3NoHeaderError
+    from mutagen.mp4 import MP4, MP4Cover
+    n = 0
+    for f in sorted(album_dir.rglob("*")):
+        if not (f.is_file() and f.suffix.lower() in ALL_AUDIO):
+            continue
+        ext = f.suffix.lower()
+        try:
+            if ext == ".flac":
+                a = FLAC(f); a.clear_pictures()
+                pic = Picture(); pic.type = 3; pic.mime = mime; pic.data = data
+                a.add_picture(pic); a.save()
+            elif ext == ".mp3":
+                try:
+                    a = ID3(f)
+                except ID3NoHeaderError:
+                    a = ID3()
+                a.delall("APIC")
+                a.add(APIC(encoding=3, mime=mime, type=3, desc="", data=data))
+                a.save(f)
+            elif ext in (".m4a", ".alac", ".m4b"):
+                a = MP4(f)
+                fmt = MP4Cover.FORMAT_PNG if "png" in mime else MP4Cover.FORMAT_JPEG
+                a["covr"] = [MP4Cover(data, imageformat=fmt)]
+                a.save()
+            else:
+                continue
+            n += 1
+        except Exception:
+            pass
+    return n
+
+
+def _fetch_caa_front(mbid: str):
+    """(bytes, mime) of the Cover Art Archive front image for a release MBID, or
+    None. CAA redirects to the Internet Archive; urllib follows the redirect."""
+    if not mbid:
+        return None
+    import urllib.request
+    req = urllib.request.Request(
+        f"https://coverartarchive.org/release/{mbid}/front",
+        headers={"User-Agent": COVER_UA})
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            data = resp.read()
+            mime = resp.headers.get("Content-Type", "image/jpeg")
+    except Exception:
+        return None
+    if not data:
+        return None
+    if data[:8] == b"\x89PNG\r\n\x1a\n":
+        mime = "image/png"
+    return data, mime
+
+
+def _drop_other_cover_files(album_dir: Path, keep: Path) -> None:
+    """Remove other primary-cover-named images so only `keep` remains (a stale
+    folder.jpg/front.jpg would otherwise shadow the chosen cover on devices)."""
+    for p in album_dir.iterdir():
+        if (p.is_file() and p.suffix.lower() in IMAGES
+                and p.stem.lower() in ("cover", "folder", "front")
+                and p.resolve() != keep.resolve()):
+            p.unlink(missing_ok=True)
+
+
+def apply_cover_policy(album_dir: Path, mbid: str | None = None,
+                       fetch: bool = True) -> str:
+    """Cover-source policy for one album dir. Returns the source used:
+
+      'embedded' - a track carried art -> written to cover.jpg (embedded wins,
+                   overriding whatever fetchart downloaded)
+      'caa'      - no embedded art; fetched from the Cover Art Archive by MBID,
+                   set as cover.jpg AND embedded back into every track
+      'kept'     - neither applied; whatever cover beets/fetchart left is left
+
+    Devices (Rockbox/PictureFlow) read external cover.jpg, never embedded art,
+    so this guarantees cover.jpg matches what the audio files actually carry.
+    Audio samples are never modified, so content keys / decisions stay valid."""
+    track = _first_audio(album_dir)
+    if track is None:
+        return "kept"
+    cover = album_dir / "cover.jpg"
+    art = _embedded_art(track)
+    if art and _write_cover_jpg(art[0], art[1], cover):
+        _drop_other_cover_files(album_dir, cover)
+        return "embedded"
+    if fetch and mbid:
+        got = _fetch_caa_front(mbid)
+        if got and _write_cover_jpg(got[0], got[1], cover):
+            _drop_other_cover_files(album_dir, cover)
+            _embed_art_into_tracks(album_dir, got[0], got[1])
+            return "caa"
+    return "kept"
 
 
 def unique_path(p: Path) -> Path:
@@ -1435,11 +1565,13 @@ class Pipeline:
             for f in apath.rglob("*"):
                 if f.suffix.lower() == ".flac" and sniff(f) not in ("flac",):
                     bad.append(f)
-            # device-ready cover art: rescue embedded-only art to a cover file,
-            # then dedupe + drop WMP junk + .jpeg->.jpg + progressive->baseline
-            # (lossless) so Rockbox/PictureFlow can read it
+            # cover-source policy: embedded art wins -> cover.jpg; else fetch
+            # from the Cover Art Archive by MBID and embed it back into tracks;
+            # else keep whatever fetchart left. Then dedupe + drop WMP junk +
+            # .jpeg->.jpg + progressive->baseline so Rockbox/PictureFlow can read it.
             if not self.args.dry_run:
-                if extract_embedded_cover(apath):
+                mbid = fields.get("mb_albumid") if fields else None
+                if apply_cover_policy(apath, mbid=mbid) != "kept":
                     cover_fixes += 1
                 cover_fixes += normalize_album_covers(apath)
         if bad:
