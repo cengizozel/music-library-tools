@@ -12,6 +12,9 @@ import:
   move: yes             # move files out of _Staging into the library
   write: yes            # write corrected tags to files
   timid: no
+  incremental: no       # the user-level beets config sets incremental: yes,
+                        # which silently skips any staging path beets has seen
+                        # before — that breaks intake's replay/retry model
   quiet_fallback: skip  # quiet mode: unmatched albums stay in place, untouched
                         # (the intake pipeline owns unmatched handling)
   log: ~/.config/beets/import.log
@@ -40,6 +43,7 @@ plugins:
   - inline          # computed fields ($multidisc below)
   - fetchart        # cover art
   - embedart        # embed cover art into files
+  - lyrics          # fetch and embed lyrics; intake writes .lrc sidecars
   - mbsync          # re-sync tags using existing MusicBrainz IDs
   - missing         # report missing tracks in albums
   - duplicates      # find duplicate tracks
@@ -81,3 +85,11 @@ fetchart:
 embedart:
   auto: yes
   ifempty: yes      # only embed if no art already present
+
+lyrics:
+  auto: no          # intake controls when lyrics are fetched (after import)
+  synced: yes       # prefer LRCLib synced lyrics (timestamps); fall back to plain
+  sources:
+    - lrclib        # best synced-lyric source; free, no key needed
+    - genius        # plain-text fallback for tracks lrclib doesn't have
+  fallback: ""

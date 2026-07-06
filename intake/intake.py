@@ -27,8 +27,12 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 import tomllib
 import unicodedata
+import urllib.error
+import urllib.parse
+import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -412,6 +416,59 @@ def unique_path(p: Path) -> Path:
         if not cand.exists():
             return cand
         n += 1
+
+
+_LRC_LINE_RE = re.compile(r"^\[\d{2}:\d{2}")
+_LRCLIB_API = "https://lrclib.net/api/get"
+_LRCLIB_UA = "music-library-tools/1.0"
+
+
+def _is_lrc(text: str) -> bool:
+    return any(_LRC_LINE_RE.match(ln) for ln in text.splitlines())
+
+
+def _fetch_lrclib(path: Path) -> str | None:
+    """Query LRCLib for synced lyrics using file tags. Returns LRC text or None."""
+    try:
+        suffix = path.suffix.lower()
+        if suffix == ".flac":
+            from mutagen.flac import FLAC
+            audio = FLAC(str(path))
+            get = lambda k: (audio.get(k) or [""])[0]
+            artist = get("artist") or get("albumartist")
+            title = get("title")
+            album = get("album")
+            duration = audio.info.length
+        elif suffix == ".mp3":
+            from mutagen.mp3 import MP3
+            audio = MP3(str(path))
+            tags = audio.tags
+            if not tags:
+                return None
+            def id3(k): f = tags.get(k); return str(f) if f else ""
+            artist = id3("TPE1") or id3("TPE2")
+            title = id3("TIT2")
+            album = id3("TALB")
+            duration = audio.info.length
+        else:
+            return None
+        if not artist or not title:
+            return None
+        params = {
+            "artist_name": artist, "track_name": title,
+            "album_name": album, "duration": str(int(duration)),
+        }
+        url = _LRCLIB_API + "?" + urllib.parse.urlencode(params)
+        req = urllib.request.Request(url, headers={"User-Agent": _LRCLIB_UA})
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            data = json.loads(resp.read())
+            synced = data.get("syncedLyrics")
+            if synced and _is_lrc(synced):
+                return synced
+        time.sleep(0.3)
+    except Exception:
+        pass
+    return None
 
 
 # --------------------------------------------------------------------- units
@@ -1582,6 +1639,31 @@ class Pipeline:
         if cover_fixes:
             self.ui.say(f"  normalized cover art: {cover_fixes} change(s)")
 
+    def phase_lyrics(self):
+        if self.args.dry_run or not self.imported_albums:
+            return
+        written = 0
+        for album in self.imported_albums:
+            fields = self.runner.album_fields(album["id"])
+            if not fields:
+                continue
+            apath = Path(fields["path"])
+            if not apath.exists():
+                continue
+            for p in sorted(apath.rglob("*")):
+                if p.suffix.lower() not in (".flac", ".mp3"):
+                    continue
+                lrc_path = p.with_suffix(".lrc")
+                if lrc_path.exists():
+                    continue
+                lyrics = _fetch_lrclib(p)
+                if lyrics:
+                    lrc_path.write_text(lyrics, encoding="utf-8")
+                    written += 1
+        if written:
+            self.ui.say(f"  wrote {written} .lrc sidecar file(s)")
+            self.bump("lrc_written", written)
+
     def phase_sync(self):
         if not self.mp3_target or self.args.dry_run:
             return
@@ -1615,6 +1697,7 @@ class Pipeline:
             # earlier --auto runs must resurface even when staging is empty
             self.phase_normalize()
             self.phase_post()
+            self.phase_lyrics()
             self.phase_sync()
         finally:
             self._release_lock()

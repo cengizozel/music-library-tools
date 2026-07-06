@@ -182,6 +182,16 @@ class BeetsRunner:
         return self._run(["modify", "-y", "-a", f"albumartist={value}",
                           f"id:{beets_album_id}"])
 
+    def fetch_lyrics(self, query: str = "") -> subprocess.CompletedProcess:
+        args = ["lyrics"]
+        if query:
+            args.append(query)
+        return self._run(args, timeout=600)
+
+    def item_paths(self, beets_album_id: str) -> list[str]:
+        result = self._run(["ls", "-f", "$path", f"album_id:{beets_album_id}"])
+        return [l for l in (result.stdout or "").splitlines() if l.strip()]
+
 
 def _to_int(s: str) -> int:
     try:
