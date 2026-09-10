@@ -33,8 +33,8 @@ per_disc_numbering: yes
 # Compilation:  Various Artists/[Year] Album/01 - Title.ext
 # Singleton:    Artist/[Year] Singles/Title.ext
 paths:
-  default: $albumartist/[$year] $album/$disc_prefix$track - $title
-  comp: Various Artists/[$year] $album/$disc_prefix$track - $title
+  default: $albumartist/[$year] $album%aunique{}/$disc_prefix$track - $title
+  comp: Various Artists/[$year] $album%aunique{}/$disc_prefix$track - $title
   singleton: $albumartist/[$year] Singles/$title
 
 plugins:
