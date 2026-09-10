@@ -203,6 +203,7 @@ The intake pipeline drives these, but each still works on its own:
 | `cover_normalizer/normalize.py LIB [--apply]` | dedupe cover art, drop WMP thumbnails, `.jpeg`->`.jpg`, lossless progressive->baseline JPEG for Rockbox/PictureFlow |
 | `strip_non_audio/strip.py DIR [--apply]` | delete junk files (keeps all audio, `.lrc`, images, `.pdf`/`.cue`) |
 | `library_organizer/organize.py LIB [--apply]` | tag-based restructure of an existing library (multi-disc flattening, Various Artists, cover art) |
+| `library_verify/verify.py LIB [--mb] [--mirror MP3DIR]` | read-only library doctor: duplicate audio inside an album, collision-suffix leftovers, files vs the claimed MusicBrainz release (count + durations), mirror consistency |
 | `beets/config.yaml` | beets config: MusicBrainz autotagger, naming scheme, art |
 
 ```bash
