@@ -110,12 +110,16 @@ def mb_release(mbid: str, cache: dict, cache_path: Path) -> dict | None:
     else:
         print(f"    MB fetch failed for {mbid}: {last}", file=sys.stderr)
         return None
+    # video media (DVD/Blu-ray in CD+DVD editions) never mirrors into audio
+    # files, so it is excluded from both the count and the duration checks
     slim = {"title": data.get("title", ""),
             "tracks": [{"disc": m.get("position") or 1,
                         "pos": t.get("position"),
                         "title": t.get("title", ""),
                         "ms": t.get("length")}
                        for m in data.get("media", [])
+                       if (m.get("format") or "CD").lower() not in
+                          ("dvd", "dvd-video", "blu-ray", "hd-dvd", "vhs")
                        for t in m.get("tracks", [])]}
     cache[mbid] = slim
     cache_path.parent.mkdir(parents=True, exist_ok=True)
@@ -164,8 +168,17 @@ def check_against_mb(album: Path, files, tolerance: int,
     problems = []
     matched = 0
     positioned = 0
+    # files re-pinned from a multi-disc edition to a single-disc one keep
+    # their disc-prefixed numbering (101, 102...) — accept either scheme
+    disc_prefixed = False
+    if not multidisc:
+        plain = [parse_file_position(f, False) for f in files]
+        if plain and not any(p and p in expected for p in plain):
+            alt = [parse_file_position(f, True) for f in files]
+            if any(p and p in expected for p in alt):
+                disc_prefixed = True
     for f in files:
-        pos = parse_file_position(f, multidisc)
+        pos = parse_file_position(f, multidisc or disc_prefixed)
         t = expected.get(pos) if pos else None
         if t is not None:
             positioned += 1
