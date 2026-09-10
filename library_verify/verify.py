@@ -149,11 +149,26 @@ def check_against_mb(album: Path, files, tolerance: int,
                 f"on MB release '{rel['title']}' ({mbid})"]
     expected = {(t["disc"], t["pos"]): t for t in rel["tracks"]}
     multidisc = len({t["disc"] for t in rel["tracks"]}) > 1
+    # a flat 1..N numbering over a multi-disc release maps sequentially
+    if multidisc:
+        nums = [parse_file_position(f, False) for f in files]
+        flat = [n[1] for n in nums if n]
+        if flat and max(flat) == len(rel["tracks"]) and len(set(flat)) == len(flat):
+            seq = {}
+            i = 0
+            for t in sorted(rel["tracks"], key=lambda t: (t["disc"], t["pos"])):
+                i += 1
+                seq[(1, i)] = t
+            expected = seq
+            multidisc = False
     problems = []
     matched = 0
+    positioned = 0
     for f in files:
         pos = parse_file_position(f, multidisc)
         t = expected.get(pos) if pos else None
+        if t is not None:
+            positioned += 1
         if t is None or t["ms"] is None:
             continue
         try:
@@ -170,7 +185,11 @@ def check_against_mb(album: Path, files, tolerance: int,
                 f"{t['disc']}-{t['pos']} '{t['title'][:40]}' expects "
                 f"{t['ms']//60000}:{(t['ms']//1000)%60:02d}")
     if matched == 0:
-        problems.append("could not map any file to an MB track position")
+        if positioned:
+            problems.append(f"note: MB release has no track durations "
+                            f"({positioned} file(s) positioned) — unverifiable")
+        else:
+            problems.append("could not map any file to an MB track position")
     return problems
 
 
