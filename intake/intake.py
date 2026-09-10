@@ -951,7 +951,54 @@ class Pipeline:
             rel = u.dir.relative_to(self.staging) if u.dir != self.staging else Path("<staging root>")
             tag = " (loose files)" if u.loose else ""
             self.ui.say(f"    {rel}{tag}: {len(u.files)} track(s)")
-        return units
+        return self._check_unit_content_dupes(units)
+
+    def _check_unit_content_dupes(self, units: list[Unit]) -> list[Unit]:
+        """Two files in one unit with the same content key means the same audio
+        under two names: a double-staged copy, or a broken rip where one track
+        was cloned across the disc (every file still passes flac -t, so only a
+        cross-file check can see it). Never import such a unit silently."""
+        kept: list[Unit] = []
+        for u in units:
+            groups: dict[str, list[Path]] = {}
+            for f, k in u.keys.items():
+                if k:
+                    groups.setdefault(k, []).append(f)
+            dup_groups = [sorted(fs) for fs in groups.values() if len(fs) > 1]
+            if not dup_groups:
+                kept.append(u)
+                continue
+            extra = sum(len(fs) - 1 for fs in dup_groups)
+            rel = u.dir.relative_to(self.staging) if u.dir != self.staging else Path("<staging root>")
+            try:
+                choice = self.ui.ask(
+                    f"  '{rel}' holds {extra} content-duplicate audio file(s) "
+                    f"(identical audio under different names — double copy or "
+                    f"broken rip). Drop the duplicates, keeping one of each?",
+                    {"d": "drop duplicates", "k": "keep all (import as-is)",
+                     "h": "hold unit (stays in staging)"}, "d",
+                    context=str(u.dir))
+            except Deferred:
+                self.ui.say(f"    held (content duplicates): {rel}")
+                continue
+            if choice == "h":
+                continue
+            if choice == "d" and not self.args.dry_run:
+                for fs in dup_groups:
+                    keeper = fs[0]
+                    for f in fs[1:]:
+                        self._adopt_lrc(f, keeper)
+                        lrc = f.with_suffix(".lrc")
+                        if lrc.exists():
+                            lrc.unlink()
+                        f.unlink()
+                        u.keys.pop(f, None)
+                        if f in u.files:
+                            u.files.remove(f)
+                        self.bump("unit_dupes_dropped")
+                self.ui.say(f"    dropped {extra} duplicate(s) from {rel}")
+            kept.append(u)
+        return kept
 
     def _relocate_nested_units(self, units: list[Unit]) -> bool:
         """A unit physically inside another unit's dir (a NAMED disc folder like
@@ -1225,6 +1272,9 @@ class Pipeline:
             # otherwise produced 'cover (1).jpg' / WMP-thumbnail clutter.
             existing_img_hashes = {self._file_sha1(p) for p in salvage_dir.iterdir()
                                    if p.is_file() and p.suffix.lower() in IMAGES}
+            album_audio_stems = " | ".join(
+                p.stem.lower() for p in salvage_dir.iterdir()
+                if p.is_file() and p.suffix.lower() in ALL_AUDIO)
             for f in salvageable:
                 if f.suffix.lower() in IMAGES:
                     if _is_thumbnail_junk(f.name):
@@ -1232,6 +1282,16 @@ class Pipeline:
                     if self._file_sha1(f) in existing_img_hashes:
                         continue  # identical art already present
                     existing_img_hashes.add(self._file_sha1(f))
+                if f.suffix.lower() in COMPANION:
+                    # a lyric that names no track of THIS album is junk from
+                    # another release riding along in the unit dir — salvaging
+                    # it would pollute the album folder forever
+                    stem = f.stem.strip().lower()
+                    candidates = {stem,
+                                  re.sub(r"^\d+[\s.\-]*", "", stem).strip(),
+                                  re.sub(r"^.*? - ", "", stem).strip()}
+                    if not any(c and c in album_audio_stems for c in candidates):
+                        continue
                 shutil.move(str(f), unique_path(salvage_dir / f.name))
         shutil.rmtree(unit.dir, ignore_errors=True)
 
@@ -1422,7 +1482,23 @@ class Pipeline:
                 num = f"{disc}{track:02d} - " if multidisc else f"{track:02d} - "
             else:
                 num = ""
-            dst = unique_path(target / f"{num}{sanitize(title)}{f.suffix.lower()}")
+            dst = target / f"{num}{sanitize(title)}{f.suffix.lower()}"
+            if dst.exists():
+                # A name collision inside an album is a duplicate until proven
+                # otherwise. Same audio: drop the staged copy. Different audio:
+                # keep both, but say so — silent ' (1)' files are how phantom
+                # duplicates used to accumulate.
+                fk = unit.keys.get(f) or track_key(f)
+                if fk is not None and track_key(dst) == fk:
+                    self._adopt_lrc(f, dst)
+                    f.unlink()
+                    self.ui.say(f"      already present (content-identical): "
+                                f"{dst.name} — staged copy dropped")
+                    self.bump("place_dedup")
+                    continue
+                dst = unique_path(dst)
+                self.ui.say(f"      WARNING: '{dst.name}': name collision with "
+                            f"DIFFERENT audio — kept both, review the album")
             lrc = f.with_suffix(".lrc")
             shutil.move(str(f), dst)
             if lrc.exists():
