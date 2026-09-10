@@ -35,14 +35,19 @@ def target_path(src: Path, source_root: Path, target_root: Path) -> Path:
 
 
 def _exists_ci(path: Path) -> bool:
-    """Exists, matching the file name case-insensitively (Song.FLAC vs .flac)."""
+    """Exists, matching only the EXTENSION case-insensitively (Song.FLAC vs
+    .flac). The stem must match exactly: folding the whole name made a mirror
+    file survive a case-only rename of its source (e.g. "In The Summer" ->
+    "In the Summer"), leaving a stale duplicate next to the new one forever
+    (and a FAT device rsync would collide on the pair)."""
     if path.exists():
         return True
     parent = path.parent
     if not parent.is_dir():
         return False
-    name = path.name.lower()
-    return any(c.name.lower() == name for c in parent.iterdir())
+    stem, suffix = path.stem, path.suffix.lower()
+    return any(c.stem == stem and c.suffix.lower() == suffix
+               for c in parent.iterdir())
 
 
 def needs_update(src: Path, dst: Path) -> bool:
