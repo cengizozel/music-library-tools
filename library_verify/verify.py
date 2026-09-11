@@ -43,7 +43,10 @@ try:
 except ImportError:
     sys.exit("mutagen required (use the repo venv)")
 
-AUDIO = (".flac", ".mp3")
+# every audio format the library may legitimately hold: counting only flac/mp3
+# made mixed-format albums look short by exactly the number of other-format
+# tracks, reporting a gap that is not there
+AUDIO = (".flac", ".mp3", ".m4a", ".opus", ".ogg", ".wav", ".aiff")
 SKIP_DIRS = {"_Staging", ".music-tools"}
 MB_UA = "music-library-tools/1.0 ( https://github.com/cengizozel/music-library-tools )"
 COLLISION = re.compile(r"^(?P<base>.+?)(?: \(\d+\)|\.\d)$")
