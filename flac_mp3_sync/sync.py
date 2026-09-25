@@ -9,7 +9,10 @@ One-way sync: FLAC library → MP3 directory.
       changed (mtime newer) → reconvert/recopy
       unchanged → skip
       deleted from source → remove from target
-  - Non-audio files (cover art, etc.) are copied as-is
+  - Cover art is re-encoded device-safe; an album with no cover file gets
+    one from the art embedded in its first track (the library is never
+    written, only the mirror)
+  - Lyrics (.lrc) are copied as-is
 
 The MP3 directory is always a derived copy — never edit it directly.
 
@@ -21,11 +24,14 @@ import sys
 import shutil
 import argparse
 import subprocess
+import tempfile
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".gif"}
 LYRIC_EXTENSIONS = {".lrc"}
+AUDIO_EXTENSIONS = {".flac", ".mp3"}
+COVER_STEMS = ("cover", "folder", "front")
 DEFAULT_EXCLUDES = ["_Staging", ".music-tools"]
 
 
@@ -141,8 +147,43 @@ def _cover_to_device_image(src: Path, dst: Path) -> bool:
     return False
 
 
-def sync_images(source_root: Path, target_root: Path, excludes: list[str]):
+def _has_cover_file(names) -> bool:
+    return any(Path(n).stem.lower() in COVER_STEMS
+               and Path(n).suffix.lower() in IMAGE_EXTENSIONS for n in names)
+
+
+def _embedded_art_track(album_dir: Path) -> Path | None:
+    """The album's first audio file if it carries embedded cover art, else None
+    (same first-track rule intake's cover policy uses)."""
+    for f in sorted(album_dir.iterdir()):
+        if f.is_file() and f.suffix.lower() in AUDIO_EXTENSIONS:
+            r = subprocess.run(
+                ["ffprobe", "-v", "error", "-select_streams", "v",
+                 "-show_entries", "stream=codec_name", "-of", "csv=p=0", str(f)],
+                capture_output=True, text=True)
+            return f if r.stdout.strip() else None
+    return None
+
+
+def _embedded_cover_to_device_image(track: Path, dst: Path) -> bool:
+    """Device cover from the art embedded in an audio file, for albums with no
+    cover file. The art goes through a temp PNG, never into the library."""
+    with tempfile.TemporaryDirectory() as tmp:
+        png = Path(tmp) / "embedded.png"
+        r = subprocess.run(
+            ["ffmpeg", "-v", "error", "-y", "-i", str(track), "-an",
+             "-frames:v", "1", "-update", "1", "-c:v", "png", str(png)],
+            capture_output=True)
+        if r.returncode != 0 or not png.exists() or png.stat().st_size == 0:
+            return False
+        return _cover_to_device_image(png, dst)
+
+
+def sync_images(source_root: Path, target_root: Path, excludes: list[str]) -> list[Path]:
+    """Mirror cover art and lyrics. Returns the album dirs (relative to
+    source_root) that have no cover art at all: no cover file, nothing embedded."""
     have_ffmpeg = shutil.which("ffmpeg") is not None
+    no_art = []
     for root, dirs, files in os.walk(source_root):
         dirs[:] = [d for d in dirs if d not in excludes]
         for fname in files:
@@ -168,6 +209,21 @@ def sync_images(source_root: Path, target_root: Path, excludes: list[str]):
                     continue
             if needs_update(src, dst):
                 shutil.copy2(src, dst)
+        # an album with no cover file of its own: derive the device cover from
+        # the art embedded in its tracks, or report it as having no art at all
+        if have_ffmpeg and not _has_cover_file(files) and any(
+                Path(f).suffix.lower() in AUDIO_EXTENSIONS for f in files):
+            src_dir = Path(root)
+            rel = src_dir.relative_to(source_root)
+            track = _embedded_art_track(src_dir)
+            if track is None:
+                no_art.append(rel)
+            else:
+                dst = target_root / rel / ("cover" + DEVICE_COVER_EXT)
+                if needs_update(track, dst):
+                    dst.parent.mkdir(parents=True, exist_ok=True)
+                    _embedded_cover_to_device_image(track, dst)
+    return no_art
 
 
 def remove_orphans(source_root: Path, target_root: Path, excludes: list[str]) -> list[Path]:
@@ -199,6 +255,12 @@ def remove_orphans(source_root: Path, target_root: Path, excludes: list[str]) ->
                             p.stem.lower() == tgt.stem.lower()
                             and p.suffix.lower() in IMAGE_EXTENSIONS
                             for p in src_dir.iterdir()):
+                        continue
+                    # a cover derived from embedded art (album has no cover
+                    # file of its own) is not an orphan either
+                    if (tgt.stem.lower() == "cover" and src_dir.is_dir()
+                            and not _has_cover_file(p.name for p in src_dir.iterdir())
+                            and _embedded_art_track(src_dir) is not None):
                         continue
                 tgt.unlink()
                 removed.append(tgt)
@@ -286,7 +348,13 @@ def main():
 
     # --- image/lyrics sync ---
     if not args.dry_run:
-        sync_images(source_root, target_root, excludes)
+        no_art = sync_images(source_root, target_root, excludes)
+        if no_art:
+            print(f"WARNING: {len(no_art)} album(s) have no cover art at all (no cover "
+                  "file, nothing embedded) and will show a blank cover on devices:")
+            for d in sorted(no_art):
+                print(f"  - {d}")
+            print()
 
     # Song.flac and Song.mp3 in the same dir both target Song.mp3 — two
     # concurrent writers on one file. Prefer the FLAC (better source).

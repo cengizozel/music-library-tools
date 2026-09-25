@@ -1508,6 +1508,10 @@ class Pipeline:
             moved += 1
         # images, booklets, cue sheets, unmatched lyrics — salvage recursively
         self._cleanup_unit_dir(unit, salvage_dir=target)
+        # manual placements bypass beets and so never reach phase_post: settle
+        # the cover here with the same policy (no MBID, so embedded art or keep)
+        apply_cover_policy(target)
+        normalize_album_covers(target)
         self.ui.say(f"    placed {moved} file(s) -> {target.relative_to(self.library)}")
         self.bump("manual_placed")
         if remember and placed_keys:

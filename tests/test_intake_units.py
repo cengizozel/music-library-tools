@@ -588,3 +588,55 @@ def test_apply_cover_policy_embedded_wins_over_existing_cover(tmp_path):
     # embedded art overrides the wrong cover, and the shadowing folder.jpg is gone
     assert (d / "cover.jpg").read_bytes() == _JPEG_1x1
     assert not (d / "folder.jpg").exists()
+
+
+# ------------------------------------------------- mirror sync: cover fallback
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "flac_mp3_sync"))
+import sync as mp3sync
+
+_SHUTIL = __import__("shutil")
+_CAN_ENCODE = bool(FLAC_BIN and _SHUTIL.which("ffmpeg") and _SHUTIL.which("cjpeg"))
+
+
+def _flac_with_art(tmp_path: Path, dst: Path, art: bool):
+    """A real FLAC at dst, optionally carrying a real (decodable) embedded JPEG."""
+    dst.write_bytes(_make_real_flac(tmp_path))
+    if art:
+        img = tmp_path / "art.jpg"
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i",
+                        "color=c=red:s=64x64", "-frames:v", "1", str(img)], check=True)
+        subprocess.run(["metaflac", f"--import-picture-from={img}", str(dst)], check=True)
+
+
+@pytest.mark.skipif(not _CAN_ENCODE, reason="flac/ffmpeg/cjpeg not installed")
+def test_sync_derives_mirror_cover_from_embedded_art(tmp_path):
+    lib, mirror = tmp_path / "lib", tmp_path / "mirror"
+    album = lib / "Artist" / "[2000] Album"; album.mkdir(parents=True)
+    _flac_with_art(tmp_path, album / "01 - Song.flac", art=True)
+    no_art = mp3sync.sync_images(lib, mirror, mp3sync.DEFAULT_EXCLUDES)
+    cover = mirror / "Artist" / "[2000] Album" / "cover.jpg"
+    assert no_art == []
+    assert cover.exists()
+    # device-safe: two quantization tables, so Rockbox renders it in color
+    assert cover.read_bytes().count(b"\xff\xdb") == 2
+    # the library itself is never written
+    assert sorted(p.name for p in album.iterdir()) == ["01 - Song.flac"]
+
+
+@pytest.mark.skipif(not _CAN_ENCODE, reason="flac/ffmpeg/cjpeg not installed")
+def test_sync_keeps_embedded_derived_cover_and_reports_artless_album(tmp_path):
+    lib, mirror = tmp_path / "lib", tmp_path / "mirror"
+    with_art = lib / "A" / "[2000] Has Art"; with_art.mkdir(parents=True)
+    no_art = lib / "B" / "[2001] No Art"; no_art.mkdir(parents=True)
+    _flac_with_art(tmp_path, with_art / "01 - x.flac", art=True)
+    _flac_with_art(tmp_path, no_art / "01 - y.flac", art=False)
+    reported = mp3sync.sync_images(lib, mirror, mp3sync.DEFAULT_EXCLUDES)
+    assert reported == [Path("B") / "[2001] No Art"]
+    # a stale cover for the art-less album is an orphan; the derived one is not
+    stale = mirror / "B" / "[2001] No Art" / "cover.jpg"
+    stale.parent.mkdir(parents=True)
+    stale.write_bytes(b"stale")
+    removed = mp3sync.remove_orphans(lib, mirror, mp3sync.DEFAULT_EXCLUDES)
+    assert stale in removed
+    assert (mirror / "A" / "[2000] Has Art" / "cover.jpg").exists()

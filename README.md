@@ -116,6 +116,13 @@ remembered decisions stay valid. The chosen `cover.jpg` is then deduped /
 de-junked / baselined, and the mirror step re-encodes it to a device-color-safe
 JPEG (see `docs/ROCKBOX_COVER_ART.md`).
 
+The policy runs for albums beets imports and for manual placements alike. As a
+safety net for albums that reach the library some other way (copied in by hand,
+say), the mirror sync gives any album with no cover file a device cover made
+from its embedded art, and prints a warning listing albums that have no art at
+all. Those are the ones that would show a blank cover on the iPod; fix them by
+adding a `cover.jpg` to the album folder.
+
 ### Pushing the mirror to devices
 
 The MP3 mirror is converted once, locally; devices get a plain rsync. Both steps

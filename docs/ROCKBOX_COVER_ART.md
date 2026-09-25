@@ -14,7 +14,10 @@ rule below applies only to the derived **device mirror** (`flac_mp3_sync`).
    embedded art wins and is written to `cover.jpg`; failing that the front cover
    is fetched from the Cover Art Archive by MBID and embedded back into the
    tracks; failing that the existing cover is kept. See the README "Cover-art
-   source policy" section.
+   source policy" section. If an album still has no cover file (it reached the
+   library without going through intake), the mirror sync builds the device
+   cover from the embedded art itself, and warns about albums with no art at
+   all.
 2. **Baseline, not progressive** — Rockbox can't decode progressive JPEGs (shows
    "bad art"). jpegtran/cjpeg produce baseline.
 3. **JPEG or BMP, not PNG** — PictureFlow's art lookup is JPEG/BMP only; large
