@@ -248,17 +248,19 @@ def remove_orphans(source_root: Path, target_root: Path, excludes: list[str]) ->
                 if (source_root / relative).exists():
                     continue
                 # a device cover.bmp derives from a library cover in any image
-                # format (cover.png/jpg -> cover.bmp); not an orphan then
+                # format (cover.png/jpg -> cover.bmp); not an orphan then. The
+                # stem must match exactly: folding case kept a stale Cover.jpg
+                # next to cover.jpg forever (and they collide on FAT devices)
                 if tgt.stem.lower() in ("cover", "folder", "front") and ext == DEVICE_COVER_EXT:
                     src_dir = source_root / relative.parent
                     if src_dir.is_dir() and any(
-                            p.stem.lower() == tgt.stem.lower()
+                            p.stem == tgt.stem
                             and p.suffix.lower() in IMAGE_EXTENSIONS
                             for p in src_dir.iterdir()):
                         continue
                     # a cover derived from embedded art (album has no cover
                     # file of its own) is not an orphan either
-                    if (tgt.stem.lower() == "cover" and src_dir.is_dir()
+                    if (tgt.stem == "cover" and src_dir.is_dir()
                             and not _has_cover_file(p.name for p in src_dir.iterdir())
                             and _embedded_art_track(src_dir) is not None):
                         continue

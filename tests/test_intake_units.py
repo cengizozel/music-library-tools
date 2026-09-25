@@ -640,3 +640,15 @@ def test_sync_keeps_embedded_derived_cover_and_reports_artless_album(tmp_path):
     removed = mp3sync.remove_orphans(lib, mirror, mp3sync.DEFAULT_EXCLUDES)
     assert stale in removed
     assert (mirror / "A" / "[2000] Has Art" / "cover.jpg").exists()
+
+
+def test_sync_removes_case_variant_cover_left_in_mirror(tmp_path):
+    lib, mirror = tmp_path / "lib", tmp_path / "mirror"
+    album = lib / "A" / "[2000] X"; album.mkdir(parents=True)
+    (album / "cover.jpg").write_bytes(b"jpg")
+    out = mirror / "A" / "[2000] X"; out.mkdir(parents=True)
+    (out / "cover.jpg").write_bytes(b"device")
+    (out / "Cover.jpg").write_bytes(b"stale")
+    removed = mp3sync.remove_orphans(lib, mirror, mp3sync.DEFAULT_EXCLUDES)
+    assert removed == [out / "Cover.jpg"]
+    assert (out / "cover.jpg").exists()
