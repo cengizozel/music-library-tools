@@ -131,7 +131,7 @@ are incremental, so adding two albums means seconds of copying, not a full rewri
 ```bash
 # iPod (Rockbox), BlackBerry SD card, etc. - always target the device's Music
 # folder, NEVER its root (.rockbox lives next to Music/ and --delete would eat it)
-rsync -rt --modify-window=2 --delete ~/Music/MP3/ "/run/media/$USER/CENGIZ IPOD/Music/"
+rsync -rt --modify-window=2 --delete --exclude='/Playlists/' ~/Music/MP3/ "/run/media/$USER/BlackBerry/music/"
 ```
 
 Plex playlists ride along: `flac_mp3_sync/playlists.py MP3DIR` (run on the
