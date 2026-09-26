@@ -134,6 +134,12 @@ are incremental, so adding two albums means seconds of copying, not a full rewri
 rsync -rt --modify-window=2 --delete ~/Music/MP3/ "/run/media/$USER/CENGIZ IPOD/Music/"
 ```
 
+Plex playlists ride along the same way: `flac_mp3_sync/playlists.py MP3DIR`
+(run on the Plex server) writes one `.m3u8` per playlist into the mirror root,
+with relative paths to the mirror's MP3s, and the device rsync carries them over.
+On Rockbox open them from the file browser under `Music/`. Smart playlists are
+exported as a snapshot, so re-run it before a device sync to refresh them.
+
 `-rt` because FAT has no permissions to preserve; `--modify-window=2` because FAT
 rounds timestamps to 2 s (without it rsync re-copies everything every run);
 `--delete` so library deletions and moves disappear from the device too.
@@ -207,6 +213,7 @@ The intake pipeline drives these, but each still works on its own:
 | `flac_validator/validate.py LIB` | flag non-FLAC audio (extension + magic bytes); `.flac_exempt` lists exempt dirs |
 | `corruption_checker/check.py LIB [--jobs N]` | `flac --test` / ffmpeg decode of every file |
 | `flac_mp3_sync/sync.py LIB MP3DIR [--dry-run]` | one-way FLAC->MP3 mirror: convert new/changed, delete orphans; cover art capped to device-safe baseline JPEG |
+| `flac_mp3_sync/playlists.py MP3DIR [--dry-run]` | export Plex music playlists into the mirror as `.m3u8` (read-only on Plex; skips empty and huge ones, removes its own stale exports) |
 | `cover_normalizer/normalize.py LIB [--apply]` | dedupe cover art, drop WMP thumbnails, `.jpeg`->`.jpg`, lossless progressive->baseline JPEG for Rockbox/PictureFlow |
 | `strip_non_audio/strip.py DIR [--apply]` | delete junk files (keeps all audio, `.lrc`, images, `.pdf`/`.cue`) |
 | `library_organizer/organize.py LIB [--apply]` | tag-based restructure of an existing library (multi-disc flattening, Various Artists, cover art) |

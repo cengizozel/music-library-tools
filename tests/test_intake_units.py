@@ -652,3 +652,20 @@ def test_sync_removes_case_variant_cover_left_in_mirror(tmp_path):
     removed = mp3sync.remove_orphans(lib, mirror, mp3sync.DEFAULT_EXCLUDES)
     assert removed == [out / "Cover.jpg"]
     assert (out / "cover.jpg").exists()
+
+
+# ------------------------------------------------- mirror: plex playlist export
+
+import playlists as plexlists
+
+
+def test_playlist_paths_map_to_mirror_and_names_are_fat_safe():
+    root = "/ToshibaExternal/Music/Official"
+    assert plexlists.mirror_relative(root + "/A/[2000] X/01 - y.FLAC", root) == "A/[2000] X/01 - y.mp3"
+    assert plexlists.mirror_relative(root + "/A/[2000] X/01 - y.mp3", root + "/") == "A/[2000] X/01 - y.mp3"
+    assert plexlists.mirror_relative("/elsewhere/A/01 - y.flac", root) is None
+    assert plexlists.playlist_filename("[2] Best $uicideboy$") == "[2] Best $uicideboy$.m3u8"
+    assert plexlists.playlist_filename('Rock: "Best"?') == "Rock_ _Best__.m3u8"
+    text = plexlists.render_m3u8([(125, "A - y", "A/[2000] X/01 - y.mp3")])
+    assert text.splitlines()[0] == "#EXTM3U" and plexlists.MARKER in text
+    assert text.endswith("#EXTINF:125,A - y\nA/[2000] X/01 - y.mp3\n")
