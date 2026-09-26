@@ -11,8 +11,11 @@ Export Plex music playlists into the MP3 mirror as .m3u8 files.
   - Empty playlists, ones over --max-tracks (e.g. an "all music" smart
     playlist) and ones whose title starts with a --skip-prefix are skipped;
     by default "[4]", the device-specific group (e.g. a PSP-only playlist)
-  - Every run replaces the previous export: .m3u8 files at the mirror root
-    that carry this tool's marker and no longer match a playlist are removed
+  - A second copy goes to Playlists/ in the mirror with absolute /Music/...
+    paths, for Rockbox's Playlists menu (its catalogue folder is /Playlists
+    on the device, next to Music/, not inside it); see push_ipod.sh
+  - Every run replaces the previous export: .m3u8 files in either place that
+    carry this tool's marker and no longer match a playlist are removed
 
 Plex is only read, never written. The token comes from $PLEX_TOKEN or from
 the server's Preferences.xml (--plex-prefs).
@@ -29,6 +32,8 @@ from pathlib import Path
 MARKER = "#EXTENC: UTF-8 exported from Plex by flac_mp3_sync/playlists.py"
 DEFAULT_PREFS = ("/opt/docker/appdata/plex/config/Library/Application Support/"
                  "Plex Media Server/Preferences.xml")
+ROCKBOX_DIR = "Playlists"
+ROCKBOX_PREFIX = "/Music/"
 FAT_UNSAFE = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 
 
@@ -51,12 +56,13 @@ def mirror_relative(plex_file: str, plex_root: str) -> str | None:
     return rel
 
 
-def render_m3u8(entries: list[tuple[int, str, str]]) -> str:
-    """entries: (duration seconds, "Artist - Title", relative path)."""
+def render_m3u8(entries: list[tuple[int, str, str]], prefix: str = "") -> str:
+    """entries: (duration seconds, "Artist - Title", relative path); prefix
+    turns the relative paths into device-absolute ones."""
     lines = ["#EXTM3U", MARKER]
     for secs, label, rel in entries:
         lines.append(f"#EXTINF:{secs},{label}")
-        lines.append(rel)
+        lines.append(prefix + rel)
     return "\n".join(lines) + "\n"
 
 
@@ -126,10 +132,13 @@ def main():
         written.add(name)
         if not args.dry_run:
             (args.mirror / name).write_text(render_m3u8(entries), encoding="utf-8")
+            (args.mirror / ROCKBOX_DIR).mkdir(exist_ok=True)
+            (args.mirror / ROCKBOX_DIR / name).write_text(
+                render_m3u8(entries, ROCKBOX_PREFIX), encoding="utf-8")
         note = f", {missing} not in mirror" if missing else ""
         print(f"  wrote {name} ({len(entries)} tracks{note})")
 
-    for old in args.mirror.glob("*.m3u8"):
+    for old in [*args.mirror.glob("*.m3u8"), *(args.mirror / ROCKBOX_DIR).glob("*.m3u8")]:
         if old.name in written:
             continue
         try:
@@ -137,7 +146,7 @@ def main():
         except OSError:
             ours = False
         if ours:
-            print(f"  removed stale {old.name}")
+            print(f"  removed stale {old.relative_to(args.mirror)}")
             if not args.dry_run:
                 old.unlink()
 

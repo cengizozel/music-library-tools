@@ -669,3 +669,5 @@ def test_playlist_paths_map_to_mirror_and_names_are_fat_safe():
     text = plexlists.render_m3u8([(125, "A - y", "A/[2000] X/01 - y.mp3")])
     assert text.splitlines()[0] == "#EXTM3U" and plexlists.MARKER in text
     assert text.endswith("#EXTINF:125,A - y\nA/[2000] X/01 - y.mp3\n")
+    rb = plexlists.render_m3u8([(125, "A - y", "A/[2000] X/01 - y.mp3")], plexlists.ROCKBOX_PREFIX)
+    assert rb.endswith("\n/Music/A/[2000] X/01 - y.mp3\n")
