@@ -8,8 +8,9 @@ Export Plex music playlists into the MP3 mirror as .m3u8 files.
   - Library paths are mapped to their mirror files (.flac -> .mp3); a track
     with no mirror file yet is skipped and reported (run sync.py first)
   - Smart playlists are exported as a snapshot of their current contents
-  - Empty playlists and ones over --max-tracks (e.g. an "all music" smart
-    playlist) are skipped
+  - Empty playlists, ones over --max-tracks (e.g. an "all music" smart
+    playlist) and ones whose title starts with a --skip-prefix are skipped;
+    by default "[4]", the device-specific group (e.g. a PSP-only playlist)
   - Every run replaces the previous export: .m3u8 files at the mirror root
     that carry this tool's marker and no longer match a playlist are removed
 
@@ -88,6 +89,8 @@ def main():
     ap.add_argument("--plex-prefs", default=DEFAULT_PREFS)
     ap.add_argument("--section", default="Music", help="Plex music library name")
     ap.add_argument("--max-tracks", type=int, default=2000)
+    ap.add_argument("--skip-prefix", action="append", default=None,
+                    help='skip playlists whose title starts with this (repeatable; default "[4]")')
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
 
@@ -98,10 +101,11 @@ def main():
         sys.exit(f"no Plex music library named {args.section!r}")
     roots = [loc["path"] for loc in sections[0]["Location"]]
 
+    skip_prefixes = tuple(args.skip_prefix or ["[4]"])
     written, problems = set(), []
     for pl in plex.get("/playlists?playlistType=audio").get("Metadata", []):
         title, count = pl["title"], int(pl.get("leafCount", 0))
-        if count == 0 or count > args.max_tracks:
+        if count == 0 or count > args.max_tracks or title.startswith(skip_prefixes):
             print(f"  skip  {title} ({count} tracks)")
             continue
         entries, missing = [], 0
