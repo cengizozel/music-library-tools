@@ -477,6 +477,48 @@ def test_detect_classical_credit_leads_with_composer():
     assert not s.default_keep  # semicolon splits are actionable
 
 
+@pytest.mark.skipif(not FLAC_BIN, reason="flac CLI not installed")
+def test_manual_place_overwrites_raw_albumartist_credit(tmp_path):
+    from mutagen.flac import FLAC
+    f = tmp_path / "01 - x.flac"
+    f.write_bytes(_make_real_flac(tmp_path))
+    a = FLAC(f)
+    a["ALBUMARTIST"] = ["Johann Sebastian Bach; Bach Collegium Japan; Masaaki Suzuki"]
+    a["ALBUM ARTIST"] = ["Johann Sebastian Bach; Bach Collegium Japan; Masaaki Suzuki"]
+    a["ALBUMARTISTS"] = ["Johann Sebastian Bach", "Bach Collegium Japan"]
+    a["ALBUM_ARTIST"] = ["Johann Sebastian Bach; Bach Collegium Japan; Masaaki Suzuki"]
+    a["ARTIST"] = ["Johann Sebastian Bach"]
+    a.save()
+    Pipeline._fill_missing_tags(f, "Bach, Johann Sebastian", "Cantatas", "2002",
+                                "x", 1, 1, False)
+    a = FLAC(f)
+    assert a["albumartist"] == ["Bach, Johann Sebastian"]
+    assert not {"album artist", "album_artist", "albumartists"} & set(a.keys())
+    assert a["artist"] == ["Johann Sebastian Bach"]  # track credit untouched
+
+
+@pytest.mark.skipif(not FLAC_BIN, reason="flac CLI not installed")
+def test_verify_flags_albumartist_not_matching_folder(tmp_path):
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "library_verify"))
+    import verify
+    from mutagen.flac import FLAC
+    album = tmp_path / "Bach, Johann Sebastian" / "[2002] Cantatas"
+    album.mkdir(parents=True)
+    good, bad = album / "01 - a.flac", album / "02 - b.flac"
+    for f, aa in ((good, "Bach, Johann Sebastian"),
+                  (bad, "Johann Sebastian Bach; Bach Collegium Japan")):
+        f.write_bytes(_make_real_flac(tmp_path))
+        t = FLAC(f); t["ALBUMARTIST"] = [aa]; t.save()
+    problems = verify.check_albumartist(album, [good, bad])
+    assert len(problems) == 1 and "Bach Collegium Japan" in problems[0]
+    assert verify.check_albumartist(album, [good]) == []
+    # sanitized folder names still match their tag
+    acdc = tmp_path / "AC_DC" / "[1980] Back in Black"; acdc.mkdir(parents=True)
+    f = acdc / "01 - a.flac"; f.write_bytes(_make_real_flac(tmp_path))
+    t = FLAC(f); t["ALBUMARTIST"] = ["AC/DC"]; t.save()
+    assert verify.check_albumartist(acdc, [f]) == []
+
+
 def test_failed_attempt_memory(tmp_path):
     s = DecisionStore(tmp_path / "d.json")
     assert not s.failed_recently("album:x")

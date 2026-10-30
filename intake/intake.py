@@ -1524,7 +1524,10 @@ class Pipeline:
                            title: str, track: int, disc: int, multidisc: bool):
         """Manual placements bypass beets, so the user's typed answers would
         otherwise live only in the directory name. Write them into the files —
-        but never overwrite an existing tag."""
+        but never overwrite an existing tag, except albumartist: the typed
+        artist IS the canonical decision (it names the folder), and a raw
+        multi-artist credit left in the tag shows up as a separate artist in
+        every tag-driven player."""
         try:
             import mutagen
             audio = mutagen.File(path, easy=True)
@@ -1535,7 +1538,12 @@ class Pipeline:
             def put(key, value):
                 if value and not audio.tags.get(key):
                     audio.tags[key] = [str(value)]
-            put("albumartist", artist)
+            if artist:
+                for stray in ("album artist", "album_artist", "albumartists",
+                              "album_artists"):
+                    if stray in audio.tags:
+                        del audio.tags[stray]
+                audio.tags["albumartist"] = [artist]
             put("artist", artist)
             put("album", album)
             put("date", year)

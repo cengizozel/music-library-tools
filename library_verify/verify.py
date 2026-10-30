@@ -11,18 +11,21 @@ slipped through over the years:
      comparing STREAMINFO MD5s across files can
   2. collision-suffix filenames ("X (1).flac" / "X.1.flac" NEXT TO "X.flac") -
      the trace a silent double import leaves behind
-  3. with --mb: the album's files vs the MusicBrainz release it claims to be
+  3. albumartist tag vs the artist folder - a raw multi-artist credit left in
+     the tag ("Johann Sebastian Bach; Bach Collegium Japan; ...") files fine
+     on disk but appears as a separate artist in tag-driven players (Jellyfin)
+  4. with --mb: the album's files vs the MusicBrainz release it claims to be
      (musicbrainz_albumid tag): track count must agree and every track's
      duration must be within tolerance - catches wrong matches accepted in the
      old strong_rec_thresh=0.40 era, and rips whose content does not match
      their names. MB responses are cached so re-runs are cheap.
-  4. with --mirror DIR: album folder set and per-folder audio counts of the
+  5. with --mirror DIR: album folder set and per-folder audio counts of the
      MP3 mirror must equal the library's
 
 Read-only: reports and exits 1 if anything is flagged, changes nothing.
 
 Usage:
-  verify.py LIB                          # checks 1+2 (local, fast)
+  verify.py LIB                          # checks 1-3 (local, fast)
   verify.py LIB --mb                     # + MusicBrainz re-verification
   verify.py LIB --mirror MP3DIR          # + mirror consistency
   verify.py LIB --mb --album "Artist/[2008] Album"   # one album only
@@ -34,6 +37,7 @@ import os
 import re
 import sys
 import time
+import unicodedata
 import urllib.request
 from pathlib import Path
 
@@ -95,6 +99,30 @@ def check_collision_names(files) -> list[str]:
             hits.append(f"collision leftover: '{f.name}' next to "
                         f"'{stems[m.group('base')].name}'")
     return hits
+
+
+def folder_name(name: str) -> str:
+    """How a tag value becomes a folder name (mirrors intake.sanitize)."""
+    name = unicodedata.normalize("NFC", name)
+    name = re.sub(r'[<>:"/\\|?*]', "_", name)
+    name = re.sub(r"[\x00-\x1f]", "", name)
+    return name.strip(". ") or "_"
+
+
+def check_albumartist(album: Path, files) -> list[str]:
+    folder = unicodedata.normalize("NFC", album.parent.name)
+    seen = {}
+    for f in files:
+        try:
+            tags = MutagenFile(f, easy=True)
+        except Exception:
+            continue
+        values = (tags.get("albumartist") if tags and tags.tags else None) or ["(none)"]
+        value = " | ".join(values)
+        if len(values) > 1 or folder_name(values[0]) != folder:
+            seen[value] = seen.get(value, 0) + 1
+    return [f"albumartist '{v}' on {n} file(s), folder is '{folder}'"
+            for v, n in seen.items()]
 
 
 def mb_release(mbid: str, cache: dict, cache_path: Path) -> dict | None:
@@ -261,6 +289,7 @@ def main():
         checked += 1
         problems = check_content_dupes(album, files)
         problems += check_collision_names(files)
+        problems += check_albumartist(album, files)
         if args.mb:
             problems += check_against_mb(album, files, args.tolerance,
                                          cache, cache_path)
