@@ -190,6 +190,13 @@ any host. To run the library from a server (e.g. next to Plex):
    ```bash
    venv/bin/python intake/intake.py --auto --sync
    ```
+4. Keep the mirror in step with edits made outside intake (tag fixes, new
+   `.lrc` lyrics) with a nightly sync. It is a no-op when nothing changed and
+   refuses to delete anything if the library drive is not mounted:
+
+   ```cron
+   30 3 * * * cd ~/Documents/GitHub/music-library-tools && flock -n /tmp/mp3-sync.lock nice -n 19 ionice -c3 venv/bin/python flac_mp3_sync/sync.py /media/devmon/Expansion/Music/Official /media/devmon/Expansion/Music/Official_mp3 > /tmp/mp3-sync.log 2>&1
+   ```
 
 > Note: `beets.db` (`.music-tools/beets.db`) stores **absolute** paths, so a copy
 > from another machine is stale — delete it and it rebuilds on the next run.
